@@ -1,0 +1,33 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  max_rooms: 1000
+  max_peers_per_room: 100
+
+webrtc:
+  ice_servers:
+    - urls: ["stun:stun.l.google.com:19302"]
+    - urls: ["stun:stun1.l.google.com:19302"]
+  udp_port_range:
+    min: 10000
+    max: 20000
+  tcp_port_range:
+    min: 20001
+    max: 30000
+  public_ip: ""  # Set this to your server's public IP
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+
+metrics:
+  enabled: true
+  port: 9090
+  path: "/metrics"
+
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # json, console

@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SFU Video Conference</title>
+    <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#111;color:#eee;min-height:100vh;display:flex;flex-direction:column}
+        .top-bar{background:#1a1a2e;padding:10px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-bottom:1px solid #222}
+        .top-bar input{padding:6px 10px;border:1px solid #333;border-radius:4px;background:#0f3460;color:#eee;font-size:13px;width:140px;outline:none}
+        .top-bar input:focus{border-color:#e94560}
+        .top-bar button{padding:6px 14px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:4px}
+        .bp{background:#e94560;color:#fff}.bp:hover{background:#c73651}
+        .bs{background:#222;color:#ccc;border:1px solid #333!important}.bs:hover{background:#333}
+        .bd{background:#c0392b;color:#fff}
+        .bg{background:#27ae60;color:#fff}.bg:hover{background:#219a52}
+        button:disabled{opacity:.35;cursor:not-allowed}
+        .status-bar{background:#0d0d1a;padding:6px 16px;font-size:11px;color:#777;display:flex;gap:16px;align-items:center;border-bottom:1px solid #1a1a1a}
+        .status-bar b{color:#e94560}
+        .spacer{flex:1}
+
+        /* Responsive grid */
+        .grid{display:grid;gap:8px;padding:12px;flex:1}
+        .grid.g1{grid-template-columns:1fr}
+        .grid.g2{grid-template-columns:1fr 1fr}
+        .grid.g3,.grid.g4{grid-template-columns:1fr 1fr}
+        .grid.g5,.grid.g6,.grid.g7,.grid.g8,.grid.g9{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+
+        .tile{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9;transition:box-shadow .3s,transform .15s}
+        .tile video{width:100%;height:100%;object-fit:cover;display:block}
+        .tile .label-bar{position:absolute;bottom:0;left:0;right:0;padding:6px 10px;background:linear-gradient(transparent,rgba(0,0,0,.85));display:flex;align-items:center;gap:6px}
+        .tile .name{font-size:12px;font-weight:500;color:#fff;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .tile.local .name{color:#5dade2}
+        .tile.remote .name{color:#58d68d}
+
+        /* Dominant speaker glow */
+        .tile.speaking{box-shadow:0 0 0 3px #27ae60,0 0 20px rgba(39,174,96,.3)}
+
+        /* Avatar when video off */
+        .tile .avatar{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#1a1a2e;font-size:48px;font-weight:700;color:#555;display:none}
+        .tile.no-video .avatar{display:flex}
+        .tile.no-video video{opacity:0}
+
+        /* Quality bars */
+        .quality{display:flex;gap:1px;align-items:flex-end;height:14px}
+        .quality .bar{width:3px;background:#333;border-radius:1px}
+        .quality .bar.on{background:#58d68d}
+        .quality.good .bar.on{background:#f1c40f}
+        .quality.poor .bar.on{background:#e67e22}
+        .quality.critical .bar.on{background:#e74c3c}
+
+        /* Layer selector */
+        .layer-select{position:absolute;top:6px;right:6px;z-index:2}
+        .layer-select select{background:#222;color:#ccc;border:1px solid #444;border-radius:3px;font-size:10px;padding:2px 4px;outline:none}
+
+        /* Stats overlay */
+        .stats-overlay{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.7);padding:3px 6px;border-radius:3px;font-size:10px;color:#999;display:none;z-index:2}
+        .stats-overlay.visible{display:block}
+
+        /* Tile animations */
+        .tile{animation:tileIn .3s ease}
+        @keyframes tileIn{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
+
+        .log-wrap{background:#0a0a12;border-top:1px solid #1a1a1a;max-height:120px;overflow-y:auto;padding:6px 16px;font:11px/1.6 'SF Mono',monospace}
+        .log-wrap div{border-bottom:1px solid #0f0f1a;color:#666}
+        .log-wrap .ok{color:#58d68d}.log-wrap .er{color:#e74c3c}.log-wrap .wn{color:#f39c12}
+        .ts{color:#444;margin-right:6px}
+
+        /* Settings modal */
+        .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100}
+        .modal-bg.show{display:flex}
+        .modal{background:#1a1a2e;border-radius:8px;padding:20px;width:320px;max-width:90vw}
+        .modal h3{margin-bottom:12px;font-size:14px}
+        .modal label{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px;cursor:pointer}
+        .modal label input[type=checkbox]{accent-color:#e94560}
+        .modal .close-btn{margin-top:12px;width:100%;padding:8px;border:none;border-radius:4px;background:#e94560;color:#fff;cursor:pointer;font-size:13px}
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <input id="roomId" placeholder="Room" value="test-room">
+        <input id="userName" placeholder="Name" value="">
+        <button id="joinBtn" class="bp" onclick="C.join()">Join</button>
+        <button id="leaveBtn" class="bd" onclick="C.leave()" disabled>Leave</button>
+        <button id="camBtn" class="bs" onclick="C.toggleCam()" disabled title="Toggle Camera">Cam Off</button>
+        <button id="micBtn" class="bs" onclick="C.toggleMic()" disabled title="Mute/Unmute">Mute</button>
+        <button id="screenBtn" class="bs" onclick="C.shareScreen()" disabled title="Share Screen">Screen</button>
+        <button id="settingsBtn" class="bs" onclick="C.toggleSettings()">Settings</button>
+    </div>
+    <div class="status-bar">
+        <span>Status: <b id="st">Offline</b></span>
+        <span>Peers: <b id="pc">0</b></span>
+        <span>Tracks: <b id="tc">0</b></span>
+        <span class="spacer"></span>
+        <span id="speaker-label" style="color:#27ae60"></span>
+    </div>
+    <div class="grid g1" id="grid">
+        <div class="tile local" id="local-tile">
+            <video id="localVideo" autoplay muted playsinline></video>
+            <div class="avatar" id="local-avatar"></div>
+            <div class="stats-overlay" id="local-stats"></div>
+            <div class="label-bar">
+                <div class="name">You</div>
+            </div>
+        </div>
+    </div>
+    <div class="log-wrap" id="log"></div>
+
+    <div class="modal-bg" id="settingsModal">
+        <div class="modal">
+            <h3>Settings</h3>
+            <label><input type="checkbox" id="opt-auto-quality" checked> Auto quality (switch layer on poor connection)</label>
+            <label><input type="checkbox" id="opt-stats-overlay"> Show stats overlay</label>
+            <button class="close-btn" onclick="C.toggleSettings()">Close</button>
+        </div>
+    </div>
+
+<script>
+class SFU {
+    constructor() {
+        this.ws = null;
+        this.pc = null;
+        this.localStream = null;
+        this.screenStream = null;
+        this.peerId = null;
+        this.roomId = null;
+        this.userName = null;
+
+        this.peers = new Map();
+        this.tiles = new Map();
+        this.trackCount = 0;
+
+        this._neg = false;
+        this._negPend = false;
+        this._negReady = false;
+        this._iceBuf = [];
+
+        // Dominant speaker
+        this.dominantSpeaker = null;
+
+        // Per-peer quality: peerId -> {level, packetLoss}
+        this.peerQuality = new Map();
+
+        // Simulcast track layers: trackId -> [rids]
+        this.simulcastLayers = new Map();
+
+        // Settings
+        this.autoQuality = true;
+        this.showStats = false;
+    }
+
+    // ---- Logging / UI ----
+    log(m, cls = '') {
+        const l = document.getElementById('log');
+        const t = new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit',fractionalSecondDigits:3});
+        l.innerHTML += `<div class="${cls}"><span class="ts">${t}</span>${m}</div>`;
+        if (l.children.length > 200) l.children[0].remove();
+        l.scrollTop = l.scrollHeight;
+    }
+
+    ui() {
+        document.getElementById('st').textContent = this.pc?.connectionState || 'Offline';
+        document.getElementById('pc').textContent = this.peers.size;
+        document.getElementById('tc').textContent = this.trackCount;
+        this._updateGrid();
+    }
+
+    _updateGrid() {
+        const grid = document.getElementById('grid');
+        const count = grid.children.length;
+        grid.className = 'grid g' + Math.min(count, 9);
+    }
+
+    // ---- Join / Leave ----
+    async join() {
+        this.roomId = document.getElementById('roomId').value;
+        this.userName = document.getElementById('userName').value || 'User' + ((Math.random()*1000)|0);
+        document.getElementById('userName').value = this.userName;
+
+        // Set local avatar initials
+        const initials = this.userName.slice(0,2).toUpperCase();
+        document.getElementById('local-avatar').textContent = initials;
+
+        if (!this.roomId) return;
+
+        try {
+            this.localStream = await navigator.mediaDevices.getUserMedia({
+                video: { width:640, height:480, frameRate:30 },
+                audio: true
+            });
+            document.getElementById('localVideo').srcObject = this.localStream;
+            this.log('Camera + mic acquired', 'ok');
+        } catch(e) { this.log('Media error: '+e.message,'er'); return; }
+
+        this._connectWS();
+    }
+
+    leave() {
+        if (this.ws?.readyState === 1) {
+            this.ws.send(JSON.stringify({type:'leave',timestamp:new Date().toISOString()}));
+            this.ws.close();
+        }
+        this.pc?.close(); this.pc = null;
+        this.localStream?.getTracks().forEach(t=>t.stop()); this.localStream = null;
+        this.screenStream?.getTracks().forEach(t=>t.stop()); this.screenStream = null;
+        this.tiles.forEach(t => t.el?.remove()); this.tiles.clear();
+        this.peers.clear();
+        this.peerQuality.clear();
+        this.simulcastLayers.clear();
+        this.dominantSpeaker = null;
+        this.trackCount = 0;
+        this._neg = false; this._negPend = false; this._negReady = false;
+        this._iceBuf = [];
+        document.getElementById('localVideo').srcObject = null;
+        document.getElementById('joinBtn').disabled = false;
+        document.getElementById('speaker-label').textContent = '';
+        ['leaveBtn','camBtn','micBtn','screenBtn'].forEach(id => document.getElementById(id).disabled = true);
+        this.ui();
+        this.log('Left room');
+    }
+
+    // ---- WebSocket ----
+    _connectWS() {
+        const url = `ws://localhost:8080/ws?userId=${encodeURIComponent(this.userName)}&name=${encodeURIComponent(this.userName)}`;
+        this.ws = new WebSocket(url);
+        this.ws.onopen = () => {
+            this.log('Connected to server', 'ok');
+            this._send('join', { roomId:this.roomId, userId:this.userName, name:this.userName });
+        };
+        this.ws.onmessage = e => { try { this._onMsg(JSON.parse(e.data)); } catch(err) { this.log('Parse: '+err.message,'er'); }};
+        this.ws.onclose = e => { this.log('WS closed ('+e.code+')','wn'); this.ui(); };
+        this.ws.onerror = () => this.log('WS error','er');
+    }
+
+    _send(type, data) {
+        this.ws.send(JSON.stringify({ type, data: JSON.stringify(data), timestamp: new Date().toISOString() }));
+    }
+
+    async _onMsg(msg) {
+        const d = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data;
+        switch(msg.type) {
+            case 'join': await this._onJoin(d); break;
+            case 'room-state': this._onRoomState(d); break;
+            case 'peer-joined': this._onPeerJoined(d); break;
+            case 'peer-left': this._onPeerLeft(d); break;
+            case 'answer': await this._onAnswer(d); break;
+            case 'ice-candidate': await this._onICE(d); break;
+            case 'renegotiate': await this._onRenegotiate(d); break;
+            case 'dominant-speaker': this._onDominantSpeaker(d); break;
+            case 'quality-stats': this._onQualityStats(d); break;
+            case 'layer-available': this._onLayerAvailable(d); break;
+            case 'error': this.log('Server: '+d.message, 'er'); break;
+            case 'ping': this.ws.send(JSON.stringify({type:'pong',timestamp:new Date().toISOString()})); break;
+        }
+    }
+
+    // ---- Signaling handlers ----
+    async _onJoin(d) {
+        if (!d.success) { this.log('Join failed','er'); return; }
+        this.peerId = d.peerId;
+        this.log('Joined -- peer ' + this.peerId.slice(0,8), 'ok');
+        document.getElementById('joinBtn').disabled = true;
+        ['leaveBtn','camBtn','micBtn','screenBtn'].forEach(id => document.getElementById(id).disabled = false);
+        await this._createPC();
+        this.ui();
+    }
+
+    _onRoomState(d) {
+        if (!d.peers) return;
+        for (const p of d.peers) this.peers.set(p.peerId, { name: p.name, userId: p.userId });
+        this.log('Room has ' + d.peers.length + ' peer(s)');
+        this.ui();
+        for (const [sid] of this.tiles) this._updateTileLabel(sid);
+    }
+
+    _onPeerJoined(d) {
+        this.peers.set(d.peerId, { name: d.name, userId: d.userId });
+        this.log(d.name + ' joined', 'ok');
+        this.ui();
+    }
+
+    _onPeerLeft(d) {
+        this.peers.delete(d.peerId);
+        this.peerQuality.delete(d.peerId);
+        this._removeTile(d.peerId);
+        this.log((d.name || d.peerId.slice(0,8)) + ' left', 'wn');
+        if (this.dominantSpeaker === d.peerId) {
+            this.dominantSpeaker = null;
+            this._updateSpeakerHighlight();
+        }
+        this.ui();
+    }
+
+    async _onAnswer(d) {
+        try {
+            await this.pc.setRemoteDescription({ type:'answer', sdp: d.sdp });
+            for (const c of this._iceBuf) { try { await this.pc.addIceCandidate(c); } catch(_){} }
+            this._iceBuf = [];
+            this._neg = false;
+            this._negReady = true;
+            if (this._negPend) { this._negPend = false; setTimeout(() => this._negotiate(), 10); }
+        } catch(e) { this.log('Answer err: '+e.message,'er'); this._neg = false; }
+    }
+
+    async _onICE(d) {
+        const c = { candidate:d.candidate, sdpMid:d.sdpMid, sdpMLineIndex:d.sdpMLineIndex };
+        if (this.pc?.remoteDescription) { try { await this.pc.addIceCandidate(c); } catch(_){} }
+        else this._iceBuf.push(c);
+    }
+
+    async _onRenegotiate(d) {
+        this.log('Server wants renegotiation: ' + d.reason);
+        if (!this.pc) return;
+        if (this._neg) { this._negPend = true; return; }
+        await this._negotiate();
+    }
+
+    _onDominantSpeaker(d) {
+        this.dominantSpeaker = d.newPeerId || null;
+        this._updateSpeakerHighlight();
+        const name = d.newPeerId ? (this.peers.get(d.newPeerId)?.name || 'Unknown') : '';
+        document.getElementById('speaker-label').textContent = name ? 'Speaking: ' + name : '';
+    }
+
+    _onQualityStats(d) {
+        this.peerQuality.set(d.peerId, { level: d.level, packetLoss: d.packetLoss });
+        this._updateQualityBars(d.peerId);
+        this._updateStatsOverlay(d.peerId);
+
+        // Auto layer switching on poor quality
+        if (this.autoQuality && d.peerId === this.peerId && d.level === 'poor') {
+            // Request lower layer for all simulcast tracks
+            for (const [trackId, rids] of this.simulcastLayers) {
+                if (rids.includes('l')) {
+                    this._send('layer-switch', { trackId, targetRid: 'l' });
+                } else if (rids.includes('m')) {
+                    this._send('layer-switch', { trackId, targetRid: 'm' });
+                }
+            }
+        }
+    }
+
+    _onLayerAvailable(d) {
+        if (d.trackId && d.layers) {
+            this.simulcastLayers.set(d.trackId, d.layers);
+        }
+    }
+
+    // ---- Speaker highlight ----
+    _updateSpeakerHighlight() {
+        document.querySelectorAll('.tile.speaking').forEach(el => el.classList.remove('speaking'));
+        if (this.dominantSpeaker) {
+            const tile = document.getElementById('tile-' + this.dominantSpeaker);
+            if (tile) tile.classList.add('speaking');
+        }
+    }
+
+    // ---- Quality bars ----
+    _updateQualityBars(peerId) {
+        const q = this.peerQuality.get(peerId);
+        if (!q) return;
+
+        const el = document.getElementById('qb-' + peerId);
+        if (!el) return;
+
+        const levels = { excellent: 4, good: 3, poor: 2, critical: 1 };
+        const active = levels[q.level] || 0;
+
+        el.className = 'quality ' + q.level;
+        const bars = el.querySelectorAll('.bar');
+        bars.forEach((bar, i) => {
+            bar.classList.toggle('on', i < active);
+        });
+    }
+
+    _updateStatsOverlay(peerId) {
+        if (!this.showStats) return;
+        const q = this.peerQuality.get(peerId);
+        if (!q) return;
+        const el = document.getElementById('stats-' + peerId);
+        if (el) {
+            el.textContent = `Loss: ${q.packetLoss.toFixed(1)}%`;
+            el.classList.toggle('visible', this.showStats);
+        }
+    }
+
+    // ---- PeerConnection ----
+    async _createPC() {
+        this.pc = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require'
+        });
+
+        // Add local video with simulcast encodings
+        const videoTrack = this.localStream.getVideoTracks()[0];
+        const audioTrack = this.localStream.getAudioTracks()[0];
+
+        if (videoTrack) {
+            this.pc.addTransceiver(videoTrack, {
+                direction: 'sendrecv',
+                sendEncodings: [
+                    { rid: 'h', maxBitrate: 1500000 },
+                    { rid: 'm', maxBitrate: 500000, scaleResolutionDownBy: 2 },
+                    { rid: 'l', maxBitrate: 150000, scaleResolutionDownBy: 4 }
+                ]
+            });
+        }
+        if (audioTrack) {
+            this.pc.addTrack(audioTrack, this.localStream);
+        }
+
+        // Pre-allocate recvonly transceivers
+        for (let i = 0; i < 3; i++) this.pc.addTransceiver('video', { direction: 'recvonly' });
+        for (let i = 0; i < 3; i++) this.pc.addTransceiver('audio', { direction: 'recvonly' });
+
+        this.pc.ontrack = (ev) => {
+            this.trackCount++;
+            this.ui();
+
+            const stream = ev.streams?.[0];
+            if (!stream) return;
+            const sid = stream.id;
+
+            const existing = this.tiles.get(sid);
+
+            if (existing) {
+                if (!existing.el && ev.track.kind === 'video') {
+                    this._createTile(stream, sid);
+                }
+                this._updateTileLabel(sid);
+                return;
+            }
+
+            if (ev.track.kind === 'video') {
+                this._createTile(stream, sid);
+            } else {
+                this.tiles.set(sid, { el: null, stream });
+                stream.onaddtrack = (e) => {
+                    if (e.track.kind === 'video' && !this.tiles.get(sid)?.el) {
+                        this._createTile(stream, sid);
+                    }
+                    this._updateTileLabel(sid);
+                };
+            }
+        };
+
+        this.pc.onicecandidate = (ev) => {
+            if (ev.candidate) {
+                this._send('ice-candidate', {
+                    candidate: ev.candidate.candidate,
+                    sdpMid: ev.candidate.sdpMid,
+                    sdpMLineIndex: ev.candidate.sdpMLineIndex,
+                    peerId: this.peerId
+                });
+            }
+        };
+
+        this.pc.onnegotiationneeded = () => {
+            if (!this._negReady) return;
+            if (this._neg) { this._negPend = true; return; }
+            this._negotiate();
+        };
+
+        this.pc.onconnectionstatechange = () => {
+            this.ui();
+            const s = this.pc?.connectionState;
+            this.log('Connection: ' + s, s === 'connected' ? 'ok' : '');
+            if (s === 'connected' && this._negPend) {
+                this._negPend = false;
+                this._negotiate();
+            }
+        };
+
+        await this._negotiate();
+    }
+
+    async _negotiate() {
+        if (this._neg) return;
+        this._neg = true;
+        this._negPend = false;
+        try {
+            const offer = await this.pc.createOffer();
+            await this.pc.setLocalDescription(offer);
+            this._send('offer', { sdp: offer.sdp, type: offer.type, peerId: this.peerId });
+        } catch(e) {
+            this.log('Offer err: '+e.message, 'er');
+            this._neg = false;
+            if (this._negPend) setTimeout(() => this._negotiate(), 50);
+        }
+    }
+
+    // ---- Video tiles ----
+    _peerName(sid) {
+        return this.peers.get(sid)?.name || 'Peer';
+    }
+
+    _getInitials(name) {
+        return name.split(/\s+/).map(w => w[0]).join('').slice(0,2).toUpperCase() || '??';
+    }
+
+    _createTile(stream, sid) {
+        const old = this.tiles.get(sid);
+        if (old?.el) return;
+
+        const tile = document.createElement('div');
+        tile.className = 'tile remote';
+        tile.id = 'tile-' + sid;
+
+        const vid = document.createElement('video');
+        vid.autoplay = true; vid.playsInline = true;
+        vid.setAttribute('playsinline','');
+        vid.srcObject = stream;
+
+        // Avatar
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar';
+        avatar.id = 'avatar-' + sid;
+        avatar.textContent = this._getInitials(this._peerName(sid));
+
+        // Stats overlay
+        const stats = document.createElement('div');
+        stats.className = 'stats-overlay' + (this.showStats ? ' visible' : '');
+        stats.id = 'stats-' + sid;
+
+        // Layer selector
+        const layerWrap = document.createElement('div');
+        layerWrap.className = 'layer-select';
+        layerWrap.id = 'layer-' + sid;
+        layerWrap.style.display = 'none';
+        const sel = document.createElement('select');
+        sel.innerHTML = '<option value="h">High</option><option value="m">Med</option><option value="l">Low</option>';
+        sel.onchange = () => {
+            // Find simulcast track for this peer and switch layer
+            for (const [trackId] of this.simulcastLayers) {
+                this._send('layer-switch', { trackId, targetRid: sel.value });
+            }
+        };
+        layerWrap.appendChild(sel);
+
+        // Label bar
+        const labelBar = document.createElement('div');
+        labelBar.className = 'label-bar';
+
+        const lbl = document.createElement('div');
+        lbl.className = 'name';
+        lbl.id = 'lbl-' + sid;
+        lbl.textContent = this._peerName(sid);
+
+        // Quality bars
+        const qb = document.createElement('div');
+        qb.className = 'quality';
+        qb.id = 'qb-' + sid;
+        for (let i = 0; i < 4; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'bar';
+            bar.style.height = (4 + i * 3) + 'px';
+            qb.appendChild(bar);
+        }
+
+        labelBar.appendChild(lbl);
+        labelBar.appendChild(qb);
+
+        tile.appendChild(vid);
+        tile.appendChild(avatar);
+        tile.appendChild(stats);
+        tile.appendChild(layerWrap);
+        tile.appendChild(labelBar);
+        document.getElementById('grid').appendChild(tile);
+        this.tiles.set(sid, { el: tile, stream });
+
+        // Show layer selector if simulcast layers exist
+        if (this.simulcastLayers.size > 0) {
+            layerWrap.style.display = '';
+        }
+
+        // Apply current speaker highlight
+        if (this.dominantSpeaker === sid) {
+            tile.classList.add('speaking');
+        }
+
+        this._updateGrid();
+        this.log('Video: ' + this._peerName(sid), 'ok');
+    }
+
+    _updateTileLabel(sid) {
+        const lbl = document.getElementById('lbl-' + sid);
+        if (lbl) lbl.textContent = this._peerName(sid);
+        const avatar = document.getElementById('avatar-' + sid);
+        if (avatar) avatar.textContent = this._getInitials(this._peerName(sid));
+    }
+
+    _removeTile(peerId) {
+        const t = this.tiles.get(peerId);
+        if (t) {
+            t.el?.remove();
+            t.stream?.getTracks().forEach(tr => tr.stop());
+            this.tiles.delete(peerId);
+            this._updateGrid();
+        }
+    }
+
+    // ---- Controls ----
+    toggleCam() {
+        const t = this.localStream?.getVideoTracks()[0];
+        if (t) {
+            t.enabled = !t.enabled;
+            document.getElementById('camBtn').textContent = t.enabled ? 'Cam Off' : 'Cam On';
+            document.getElementById('local-tile').classList.toggle('no-video', !t.enabled);
+        }
+    }
+
+    toggleMic() {
+        const t = this.localStream?.getAudioTracks()[0];
+        if (t) { t.enabled = !t.enabled; document.getElementById('micBtn').textContent = t.enabled ? 'Mute' : 'Unmute'; }
+    }
+
+    async shareScreen() {
+        try {
+            this.screenStream = await navigator.mediaDevices.getDisplayMedia({video:true});
+            const st = this.screenStream.getVideoTracks()[0];
+            const sender = this.pc.getSenders().find(s=>s.track?.kind==='video');
+            if (sender) { await sender.replaceTrack(st); st.onended = () => this._stopScreen(); this.log('Screen sharing','ok'); }
+        } catch(e) { this.log('Screen err: '+e.message,'er'); }
+    }
+
+    async _stopScreen() {
+        this.screenStream?.getTracks().forEach(t=>t.stop());
+        const cam = this.localStream?.getVideoTracks()[0];
+        const sender = this.pc?.getSenders().find(s=>s.track?.kind==='video');
+        if (sender && cam) await sender.replaceTrack(cam);
+        this.screenStream = null;
+        this.log('Screen stopped');
+    }
+
+    toggleSettings() {
+        const modal = document.getElementById('settingsModal');
+        modal.classList.toggle('show');
+        // Sync settings from UI
+        this.autoQuality = document.getElementById('opt-auto-quality').checked;
+        this.showStats = document.getElementById('opt-stats-overlay').checked;
+        // Update all stats overlays
+        document.querySelectorAll('.stats-overlay').forEach(el => {
+            el.classList.toggle('visible', this.showStats);
+        });
+    }
+}
+
+const C = new SFU();
+</script>
+</body>
+</html>
