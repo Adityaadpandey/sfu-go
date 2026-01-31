@@ -358,27 +358,36 @@ class SFU {
         await this._negotiate();
     }
 
-    _ensureTransceivers(needed) {
+    _ensureTransceivers(neededTotal) {
+        // Count existing recvonly transceivers that are unused (no live incoming track).
+        // We need at least neededTotal/2 free video and neededTotal/2 free audio.
         const transceivers = this.pc.getTransceivers();
-        let freeVideo = 0, freeAudio = 0;
+        let usedVideo = 0, usedAudio = 0, totalRecvVideo = 0, totalRecvAudio = 0;
         for (const t of transceivers) {
-            if (t.direction === 'recvonly' || t.direction === 'sendrecv') {
-                if (!t.receiver?.track || t.receiver.track.readyState === 'ended' || !t.receiver.track.id) continue;
-                // count unused recvonly
-            }
-            if (t.direction === 'recvonly' && (!t.receiver?.track || t.receiver.track.muted)) {
-                if (t.mid === null || t.receiver.track?.kind === 'video') freeVideo++;
-                else freeAudio++;
+            // Skip sendonly / inactive transceivers
+            if (t.direction !== 'recvonly' && t.direction !== 'sendrecv') continue;
+            const recvTrack = t.receiver?.track;
+            if (!recvTrack) continue;
+            if (recvTrack.kind === 'video') {
+                totalRecvVideo++;
+                if (!recvTrack.muted && recvTrack.readyState === 'live') usedVideo++;
+            } else if (recvTrack.kind === 'audio') {
+                totalRecvAudio++;
+                if (!recvTrack.muted && recvTrack.readyState === 'live') usedAudio++;
             }
         }
-        // Add more if needed (rough estimate: half video, half audio)
-        const halfNeeded = Math.ceil(needed / 2);
-        const videoToAdd = Math.max(0, halfNeeded - freeVideo);
-        const audioToAdd = Math.max(0, halfNeeded - freeAudio);
+        const freeVideo = totalRecvVideo - usedVideo;
+        const freeAudio = totalRecvAudio - usedAudio;
+        // Ensure at least 4 spare of each kind beyond what's needed
+        const halfNeeded = Math.ceil(neededTotal / 2);
+        const wantFreeVideo = Math.max(halfNeeded, 4);
+        const wantFreeAudio = Math.max(halfNeeded, 4);
+        const videoToAdd = Math.max(0, wantFreeVideo - freeVideo);
+        const audioToAdd = Math.max(0, wantFreeAudio - freeAudio);
         for (let i = 0; i < videoToAdd; i++) this.pc.addTransceiver('video', { direction: 'recvonly' });
         for (let i = 0; i < audioToAdd; i++) this.pc.addTransceiver('audio', { direction: 'recvonly' });
         if (videoToAdd + audioToAdd > 0) {
-            this.log(`Added ${videoToAdd}v+${audioToAdd}a transceivers`, 'wn');
+            this.log(`Transceivers: +${videoToAdd}v +${audioToAdd}a (free: ${freeVideo}v/${freeAudio}a, used: ${usedVideo}v/${usedAudio}a)`, 'wn');
         }
     }
 
@@ -466,23 +475,33 @@ class SFU {
         if (videoTrack) this.pc.addTrack(videoTrack, this.localStream);
         if (audioTrack) this.pc.addTrack(audioTrack, this.localStream);
 
-        // Pre-allocate recvonly transceivers (10+10 to support many peers)
-        for (let i = 0; i < 10; i++) this.pc.addTransceiver('video', { direction: 'recvonly' });
-        for (let i = 0; i < 10; i++) this.pc.addTransceiver('audio', { direction: 'recvonly' });
+        // Pre-allocate recvonly transceivers (20+20 to support up to ~20 peers)
+        for (let i = 0; i < 20; i++) this.pc.addTransceiver('video', { direction: 'recvonly' });
+        for (let i = 0; i < 20; i++) this.pc.addTransceiver('audio', { direction: 'recvonly' });
 
         this.pc.ontrack = (ev) => {
             this.trackCount++;
             this.ui();
+            this.log(`ontrack: kind=${ev.track.kind} streams=${ev.streams.length} id=${ev.track.id.slice(0,8)}`);
 
-            const stream = ev.streams?.[0];
-            if (!stream) return;
+            // Get or create a MediaStream for this track
+            let stream = ev.streams?.[0];
+            if (!stream) {
+                // Pion may deliver tracks without stream association — create a synthetic stream
+                stream = new MediaStream([ev.track]);
+                this.log('Track had no stream, created synthetic', 'wn');
+            }
             const sid = stream.id;
 
             const existing = this.tiles.get(sid);
 
             if (existing) {
+                // Add this track to the existing stream if not already there
+                if (!existing.stream.getTrackById(ev.track.id)) {
+                    existing.stream.addTrack(ev.track);
+                }
                 if (!existing.el && ev.track.kind === 'video') {
-                    this._createTile(stream, sid);
+                    this._createTile(existing.stream, sid);
                 }
                 this._updateTileLabel(sid);
                 return;

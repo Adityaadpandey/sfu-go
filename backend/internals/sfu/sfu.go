@@ -94,14 +94,18 @@ func (s *SFU) setupWebRTCConfig() {
 		s.logger.Error("Failed to register default codecs", zap.Error(err))
 	}
 
-	// Register RID/MID header extensions required for simulcast negotiation
-	for _, ext := range []string{
-		"urn:ietf:params:rtp-hdrext:sdes:mid",
-		"urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
-		"urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
-	} {
-		if err := mediaEngine.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: ext}, webrtc.RTPCodecTypeVideo); err != nil {
-			s.logger.Error("Failed to register header extension", zap.String("uri", ext), zap.Error(err))
+	// Only register simulcast header extensions if simulcast is enabled.
+	// Without these, Pion won't attempt simulcast SSRC probing, avoiding
+	// "Incoming unhandled RTP ssrc" errors.
+	if s.config.Media.SimulcastEnabled {
+		for _, ext := range []string{
+			"urn:ietf:params:rtp-hdrext:sdes:mid",
+			"urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
+			"urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
+		} {
+			if err := mediaEngine.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: ext}, webrtc.RTPCodecTypeVideo); err != nil {
+				s.logger.Error("Failed to register header extension", zap.String("uri", ext), zap.Error(err))
+			}
 		}
 	}
 
@@ -643,9 +647,7 @@ func (s *SFU) getOrCreateRoom(roomID string) *room.Room {
 	r.OnDominantSpeakerChanged = s.handleDominantSpeakerChanged
 	r.OnQualityStats = s.handleQualityStats
 
-	if s.config.Media.SimulcastEnabled {
-		r.SetSimulcastEnabled(true)
-	}
+	r.SetSimulcastEnabled(s.config.Media.SimulcastEnabled)
 	if s.config.Media.SpeakerDetectionInterval > 0 {
 		r.SetSpeakerDetectionInterval(s.config.Media.SpeakerDetectionInterval)
 	}

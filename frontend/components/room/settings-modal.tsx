@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRoomStore } from "@/store/useRoomStore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Settings, 
   Video, 
@@ -19,6 +20,20 @@ import {
   Volume2
 } from "lucide-react";
 
+type MediaDeviceOption = { id: string; label: string };
+
+function dedupeById(devices: MediaDeviceInfo[]) {
+  const seen = new Set<string>();
+  const out: MediaDeviceInfo[] = [];
+  for (const d of devices) {
+    if (!seen.has(d.deviceId)) {
+      seen.add(d.deviceId);
+      out.push(d);
+    }
+  }
+  return out;
+}
+
 export function SettingsModal() {
   const { 
     showSettingsModal, 
@@ -28,6 +43,58 @@ export function SettingsModal() {
   } = useRoomStore();
 
   const [activeTab, setActiveTab] = useState("general");
+  const [mics, setMics] = useState<MediaDeviceOption[]>([]);
+  const [cams, setCams] = useState<MediaDeviceOption[]>([]);
+
+  const canEnumerate = useMemo(() => typeof navigator !== "undefined" && !!navigator.mediaDevices?.enumerateDevices, []);
+
+  useEffect(() => {
+    if (!showSettingsModal) return;
+    if (!canEnumerate) return;
+
+    let mounted = true;
+
+    const load = async () => {
+      try {
+        // Ensure labels are available (user might not have granted permissions yet)
+        // If we can't get a stream, we can still show devices with empty labels.
+        try {
+          const tmp = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+          tmp.getTracks().forEach(t => t.stop());
+        } catch {
+          // ignore
+        }
+
+        const devices = dedupeById(await navigator.mediaDevices.enumerateDevices());
+        const micOpts = devices
+          .filter(d => d.kind === "audioinput")
+          .map((d, idx) => ({ id: d.deviceId, label: d.label || `Microphone ${idx + 1}` }));
+        const camOpts = devices
+          .filter(d => d.kind === "videoinput")
+          .map((d, idx) => ({ id: d.deviceId, label: d.label || `Camera ${idx + 1}` }));
+
+        if (!mounted) return;
+        setMics(micOpts);
+        setCams(camOpts);
+
+        // If we have devices but no selection yet, default to first.
+        if (!settings.selectedMicId && micOpts[0]?.id) {
+          updateSettings({ selectedMicId: micOpts[0].id });
+        }
+        if (!settings.selectedCameraId && camOpts[0]?.id) {
+          updateSettings({ selectedCameraId: camOpts[0].id });
+        }
+      } catch (e) {
+        console.warn("Failed to enumerate devices", e);
+      }
+    };
+
+    load();
+
+    return () => {
+      mounted = false;
+    };
+  }, [showSettingsModal, canEnumerate, settings.selectedMicId, settings.selectedCameraId, updateSettings]);
 
   return (
     <Dialog open={showSettingsModal} onOpenChange={toggleSettingsModal}>
@@ -131,20 +198,60 @@ export function SettingsModal() {
                 <div className="p-4 bg-slate-700/30 rounded-lg">
                   <Label className="text-sm font-medium flex items-center gap-2 mb-3">
                     <Mic className="w-4 h-4 text-blue-400" />
+                    Input Device
+                  </Label>
+                  <Select
+                    value={settings.selectedMicId}
+                    onValueChange={(value) => updateSettings({ selectedMicId: value })}
+                  >
+                    <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
+                      <SelectValue placeholder={canEnumerate ? "Select microphone" : "Microphone selection unavailable"} />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border-slate-700 text-white">
+                      {mics.length === 0 ? (
+                        <SelectItem value="__none" disabled>
+                          No microphones found
+                        </SelectItem>
+                      ) : (
+                        mics.map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.label}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Changing this will update your live mic track (no need to re-join).
+                  </p>
+                </div>
+
+                <div className="p-4 bg-slate-700/30 rounded-lg">
+                  <Label className="text-sm font-medium flex items-center gap-2 mb-3">
+                    <Mic className="w-4 h-4 text-blue-400" />
                     Microphone Settings
                   </Label>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Noise Suppression</span>
-                      <Switch defaultChecked />
+                      <Switch
+                        checked={settings.noiseSuppression}
+                        onCheckedChange={(checked) => updateSettings({ noiseSuppression: checked })}
+                      />
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Echo Cancellation</span>
-                      <Switch defaultChecked />
+                      <Switch
+                        checked={settings.echoCancellation}
+                        onCheckedChange={(checked) => updateSettings({ echoCancellation: checked })}
+                      />
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Auto Gain Control</span>
-                      <Switch defaultChecked />
+                      <Switch
+                        checked={settings.autoGainControl}
+                        onCheckedChange={(checked) => updateSettings({ autoGainControl: checked })}
+                      />
                     </div>
                   </div>
                 </div>
@@ -176,16 +283,53 @@ export function SettingsModal() {
                 <div className="p-4 bg-slate-700/30 rounded-lg">
                   <Label className="text-sm font-medium flex items-center gap-2 mb-3">
                     <Video className="w-4 h-4 text-blue-400" />
+                    Camera Device
+                  </Label>
+                  <Select
+                    value={settings.selectedCameraId}
+                    onValueChange={(value) => updateSettings({ selectedCameraId: value })}
+                  >
+                    <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
+                      <SelectValue placeholder={canEnumerate ? "Select camera" : "Camera selection unavailable"} />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border-slate-700 text-white">
+                      {cams.length === 0 ? (
+                        <SelectItem value="__none" disabled>
+                          No cameras found
+                        </SelectItem>
+                      ) : (
+                        cams.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.label}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Changing this will update your live camera track (no need to re-join).
+                  </p>
+                </div>
+
+                <div className="p-4 bg-slate-700/30 rounded-lg">
+                  <Label className="text-sm font-medium flex items-center gap-2 mb-3">
+                    <Video className="w-4 h-4 text-blue-400" />
                     Camera Settings
                   </Label>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Mirror Local Video</span>
-                      <Switch defaultChecked />
+                      <Switch
+                        checked={settings.mirrorLocalVideo}
+                        onCheckedChange={(checked) => updateSettings({ mirrorLocalVideo: checked })}
+                      />
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">HD Video Quality</span>
-                      <Switch defaultChecked />
+                      <Switch
+                        checked={settings.hdVideo}
+                        onCheckedChange={(checked) => updateSettings({ hdVideo: checked })}
+                      />
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Low Light Enhancement</span>

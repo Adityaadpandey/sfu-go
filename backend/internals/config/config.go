@@ -138,7 +138,7 @@ func LoadConfig() *Config {
 			RateLimitBurst:     getEnvInt("SFU_RATE_LIMIT_BURST", 40),
 			MaxRoomIDLength:          getEnvInt("SFU_MAX_ROOM_ID_LENGTH", 128),
 			MaxUserIDLength:          getEnvInt("SFU_MAX_USER_ID_LENGTH", 128),
-			SimulcastEnabled:         getEnvBool("SFU_SIMULCAST_ENABLED", true),
+			SimulcastEnabled:         getEnvBool("SFU_SIMULCAST_ENABLED", false),
 			SpeakerDetectionInterval: time.Duration(getEnvInt("SFU_SPEAKER_DETECTION_INTERVAL_MS", 200)) * time.Millisecond,
 			StatsInterval:            time.Duration(getEnvInt("SFU_STATS_INTERVAL_MS", 3000)) * time.Millisecond,
 		},

@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { VideoGrid } from "@/components/room/video-grid";
 import { Controls } from "@/components/room/controls";
 import { TopBar } from "@/components/room/top-bar";
 import { SidePanel } from "@/components/room/side-panel";
-import { SettingsModal } from "@/components/room/settings-modal";
 import { useRoomStore } from "@/store/useRoomStore";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +30,7 @@ export function MeetingRoom() {
         {/* Video Area */}
         <div className={cn(
           "flex-1 flex flex-col transition-all duration-300 ease-in-out",
-          showSidePanel ? "mr-80" : ""
+          showSidePanel ? "lg:mr-80" : ""
         )}>
           {/* Video Grid */}
           <div className="flex-1 relative">
@@ -44,6 +43,7 @@ export function MeetingRoom() {
               onToggleSidePanel={() => setShowSidePanel(!showSidePanel)}
               onChangeSidePanelTab={setSidePanelTab}
               sidePanelTab={sidePanelTab}
+              isSidePanelOpen={showSidePanel}
             />
           </div>
         </div>
@@ -56,9 +56,6 @@ export function MeetingRoom() {
           onClose={() => setShowSidePanel(false)}
         />
       </div>
-
-      {/* Modals */}
-      <SettingsModal />
     </div>
   );
 }

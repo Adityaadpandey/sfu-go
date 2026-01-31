@@ -105,16 +105,16 @@ export function ParticipantTile({
         muted={isLocal || isMuted}
         className={cn(
           "w-full h-full object-cover",
-          isLocal && "transform scale-x-[-1]", // Mirror local video
+          isLocal && settings.mirrorLocalVideo && "transform scale-x-[-1]", // Mirror local video (optional)
           !cameraOn && "opacity-0"
         )}
       />
 
       {/* Avatar when video is off */}
       {!cameraOn && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-700 to-slate-800">
+        <div className="absolute inset-0 flex items-center justify-center bg-linear-to-br from-slate-700 to-slate-800">
           <div className={cn(
-            "rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg",
+            "rounded-full bg-linear-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg",
             isMainView ? "w-24 h-24 text-3xl" : isThumbnail ? "w-8 h-8 text-xs" : "w-16 h-16 text-xl"
           )}>
             {getInitials(name)}
@@ -202,7 +202,7 @@ export function ParticipantTile({
       )}
 
       {/* Bottom Info Bar */}
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3">
+      <div className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-black/80 via-black/40 to-transparent p-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             {/* Name */}

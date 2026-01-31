@@ -79,7 +79,7 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
   if (!isOpen) return null;
 
   return (
-    <div className="absolute right-0 top-0 bottom-0 w-80 bg-slate-800/95 backdrop-blur-sm border-l border-slate-700/50 flex flex-col z-10">
+    <div className="fixed right-0 top-0 bottom-0 w-full sm:w-96 lg:w-80 bg-slate-800/95 backdrop-blur-sm border-l border-slate-700/50 flex flex-col z-20 shadow-2xl">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-slate-700/50">
         <h2 className="text-lg font-semibold text-white">Meeting Details</h2>

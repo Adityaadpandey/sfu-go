@@ -24,9 +24,10 @@ interface ControlsProps {
   onToggleSidePanel: () => void;
   onChangeSidePanelTab: (tab: "participants" | "chat" | "logs") => void;
   sidePanelTab: "participants" | "chat" | "logs";
+  isSidePanelOpen: boolean;
 }
 
-export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab }: ControlsProps) {
+export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab, isSidePanelOpen }: ControlsProps) {
   const { toggleMic, toggleCamera, toggleScreenShare, disconnect } = useWebRTCContext();
   const { 
     isMicOn, 
@@ -50,6 +51,20 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
   };
 
   const participantCount = Object.keys(peers).length + 1;
+
+  const openSidePanelTab = (tab: "participants" | "chat" | "logs") => {
+    // If the panel is open and the user clicks the active tab, treat it as "close".
+    if (isSidePanelOpen && sidePanelTab === tab) {
+      onToggleSidePanel();
+      return;
+    }
+
+    // Switch tab (and open panel if needed).
+    onChangeSidePanelTab(tab);
+    if (!isSidePanelOpen) {
+      onToggleSidePanel();
+    }
+  };
 
   return (
     <div className="bg-slate-800/90 backdrop-blur-sm border-t border-slate-700/50 px-6 py-4">
@@ -151,10 +166,7 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
                 ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" 
                 : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
             )}
-            onClick={() => {
-              onChangeSidePanelTab("participants");
-              onToggleSidePanel();
-            }}
+            onClick={() => openSidePanelTab("participants")}
             title="Show participants"
           >
             <Users className="h-4 w-4 mr-2" />
@@ -171,10 +183,7 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
                 ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" 
                 : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
             )}
-            onClick={() => {
-              onChangeSidePanelTab("chat");
-              onToggleSidePanel();
-            }}
+            onClick={() => openSidePanelTab("chat")}
             title="Open chat"
           >
             <MessageSquare className="h-4 w-4" />
@@ -190,10 +199,7 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
                 ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" 
                 : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
             )}
-            onClick={() => {
-              onChangeSidePanelTab("logs");
-              onToggleSidePanel();
-            }}
+            onClick={() => openSidePanelTab("logs")}
             title="Show debug logs"
           >
             <Terminal className="h-4 w-4" />

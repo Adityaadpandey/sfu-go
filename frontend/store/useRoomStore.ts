@@ -12,6 +12,13 @@ interface Settings {
   autoQuality: boolean;
   showStats: boolean;
   showLogs: boolean;
+  selectedMicId?: string;
+  selectedCameraId?: string;
+  mirrorLocalVideo: boolean;
+  hdVideo: boolean;
+  noiseSuppression: boolean;
+  echoCancellation: boolean;
+  autoGainControl: boolean;
 }
 
 interface RoomState {
@@ -83,6 +90,13 @@ const initialSettings: Settings = {
   autoQuality: true,
   showStats: false,
   showLogs: true,
+  selectedMicId: undefined,
+  selectedCameraId: undefined,
+  mirrorLocalVideo: true,
+  hdVideo: true,
+  noiseSuppression: true,
+  echoCancellation: true,
+  autoGainControl: true,
 };
 
 export const useRoomStore = create<RoomState>((set, get) => ({

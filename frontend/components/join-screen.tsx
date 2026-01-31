@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, memo } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -58,8 +59,8 @@ const VideoPreview = memo(({
             className="w-full h-full object-cover transform scale-x-[-1]"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-700 to-slate-800">
-            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-2xl">
+          <div className="w-full h-full flex items-center justify-center bg-linear-to-br from-slate-700 to-slate-800">
+            <div className="w-20 h-20 rounded-full bg-linear-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-2xl">
               {name ? name.charAt(0).toUpperCase() : "?"}
             </div>
           </div>
@@ -110,11 +111,14 @@ VideoPreview.displayName = "VideoPreview";
 
 export function JoinScreen() {
   const { connect } = useWebRTCContext();
-  const { status } = useRoomStore();
+  const { status, toggleSettingsModal, settings } = useRoomStore();
+  const searchParams = useSearchParams();
   const [roomId, setRoomId] = useState("");
   const [name, setName] = useState("");
   const [userId] = useState(() => "user-" + Math.floor(Math.random() * 10000));
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
+  const previewStreamRef = useRef<MediaStream | null>(null);
+  const roomEditedRef = useRef(false);
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [isMicOn, setIsMicOn] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -137,11 +141,22 @@ export function JoinScreen() {
     const getPreviewStream = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, frameRate: 30 },
-          audio: true
+          video: {
+            deviceId: settings.selectedCameraId ? { exact: settings.selectedCameraId } : undefined,
+            width: settings.hdVideo ? 1280 : 640,
+            height: settings.hdVideo ? 720 : 480,
+            frameRate: 30
+          },
+          audio: {
+            deviceId: settings.selectedMicId ? { exact: settings.selectedMicId } : undefined,
+            noiseSuppression: settings.noiseSuppression,
+            echoCancellation: settings.echoCancellation,
+            autoGainControl: settings.autoGainControl,
+          }
         });
         
         if (mounted) {
+          previewStreamRef.current = stream;
           setPreviewStream(stream);
           setMediaError(null);
         }
@@ -159,11 +174,11 @@ export function JoinScreen() {
 
     return () => {
       mounted = false;
-      if (previewStream) {
-        previewStream.getTracks().forEach(track => track.stop());
-      }
+      const s = previewStreamRef.current;
+      if (s) s.getTracks().forEach(track => track.stop());
+      previewStreamRef.current = null;
     };
-  }, []); // Empty dependency array - only run once
+  }, [settings.selectedCameraId, settings.selectedMicId, settings.hdVideo, settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl]); // Re-acquire if devices/settings change
 
   // Memoized toggle functions to prevent re-renders
   const toggleCamera = useCallback(() => {
@@ -204,8 +219,17 @@ export function JoinScreen() {
   }, []);
 
   const handleRoomIdChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    roomEditedRef.current = true;
     setRoomId(e.target.value);
   }, []);
+
+  // Prefill room from URL query (?room=abc or ?roomId=abc)
+  useEffect(() => {
+    const fromUrl = searchParams.get("room") || searchParams.get("roomId") || "";
+    if (!fromUrl) return;
+    if (roomEditedRef.current) return;
+    setRoomId(fromUrl);
+  }, [searchParams]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
@@ -214,7 +238,7 @@ export function JoinScreen() {
         <div className="space-y-8 text-center lg:text-left">
           <div className="space-y-4">
             <div className="flex items-center justify-center lg:justify-start gap-3">
-              <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+              <div className="w-12 h-12 bg-linear-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
                 <Video className="w-6 h-6 text-white" />
               </div>
               <div>
@@ -344,7 +368,7 @@ export function JoinScreen() {
               </div>
 
               <Button
-                className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 transition-all duration-200 shadow-lg hover:shadow-xl"
+                className="w-full bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 transition-all duration-200 shadow-lg hover:shadow-xl"
                 onClick={handleJoin}
                 disabled={!roomId || !name || isConnecting}
               >
@@ -366,6 +390,8 @@ export function JoinScreen() {
                   variant="ghost"
                   size="sm"
                   className="text-slate-400 hover:text-white"
+                  onClick={toggleSettingsModal}
+                  disabled={isConnecting}
                 >
                   <Settings className="w-4 h-4 mr-2" />
                   Audio & Video Settings

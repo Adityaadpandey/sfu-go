@@ -44,6 +44,11 @@ export function VideoGrid() {
     return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5";
   };
 
+  const pickBestStream = (streams: MediaStream[] | undefined) => {
+    if (!streams || streams.length === 0) return null;
+    return streams.find((s) => s.getVideoTracks().length > 0) || streams[0];
+  };
+
   const renderSpeakerView = () => {
     const speakerId = pinnedParticipant || dominantSpeakerId;
     const mainParticipant = speakerId === "local" || speakerId === userId 
@@ -63,7 +68,7 @@ export function VideoGrid() {
             <ParticipantTile
               id={mainParticipant.id}
               name={mainParticipant.name}
-              stream={mainParticipant.stream || (remoteStreams[mainParticipant.id]?.[0] || null)}
+              stream={mainParticipant.stream || pickBestStream(remoteStreams[mainParticipant.id])}
               isLocal={mainParticipant.isLocal || mainParticipant.id === "local"}
               isSpeaking={mainParticipant.id === dominantSpeakerId}
               isMainView={true}
@@ -89,7 +94,7 @@ export function VideoGrid() {
                   <ParticipantTile
                     id={participant.id}
                     name={participant.name}
-                    stream={participant.stream || (remoteStreams[participant.id]?.[0] || null)}
+                    stream={participant.stream || pickBestStream(remoteStreams[participant.id])}
                     isLocal={participant.isLocal || participant.id === "local"}
                     isSpeaking={participant.id === dominantSpeakerId}
                     isThumbnail={true}
@@ -121,7 +126,7 @@ export function VideoGrid() {
       {/* Remote Peers */}
       {allPeers.map((peer) => {
         const streams = remoteStreams[peer.id] || [];
-        const mainStream = streams[0] || null;
+        const mainStream = pickBestStream(streams);
 
         return (
           <ParticipantTile

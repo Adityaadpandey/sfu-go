@@ -175,7 +175,7 @@ func NewRoom(name string, maxPeers int, logger *zap.Logger) *Room {
 		lastRenegotiation:   make(map[string]time.Time),
 		renegotiationDelay:  150 * time.Millisecond,
 		maxRTPErrors:        50,
-		simulcastEnabled:    true,
+		simulcastEnabled:    false,
 		audioLevels:         make(map[string]*AudioLevel),
 		statsInterval:       3 * time.Second,
 		speakerDetectionInterval: 200 * time.Millisecond,
@@ -379,134 +379,20 @@ func (r *Room) handlePeerTrackAdded(p *peer.Peer, track *webrtc.TrackRemote, rec
 		return
 	}
 
-	rid := track.RID()
 	baseTrackID := track.StreamID() + ":" + track.Kind().String()
 
 	r.mu.Lock()
 
 	// ---- Handle duplicate OnTrack for same track ID ----
-	// Pion may fire OnTrack twice for the same track: first with RID="" (before
-	// identifying simulcast), then again with a real RID. Handle the upgrade.
-	if existing, ok := r.MediaTracks[track.ID()]; ok {
-		if rid != "" && r.simulcastEnabled {
-			// Upgrade existing non-simulcast track to simulcast.
-			// DON'T cancel the old context — the old fan-out goroutine checks
-			// IsSimulcast and exits gracefully. The same context is shared by
-			// the new layer fan-outs and is cancelled when the peer leaves.
-			if !existing.IsSimulcast {
-				existing.IsSimulcast = true
-				existing.BaseTrackID = baseTrackID
-				if existing.Layers == nil {
-					existing.Layers = make(map[string]*SimulcastLayer)
-				}
-			}
-
-			existing.mu.Lock()
-			existing.Layers[rid] = &SimulcastLayer{RID: rid, Track: track, Active: true}
-			// Update all existing subscribers to receive this layer
-			for _, sub := range existing.Subscribers {
-				if sub.CurrentRID == "" {
-					sub.CurrentRID = rid
-				}
-			}
-			existing.mu.Unlock()
-			r.mu.Unlock()
-
-			r.logger.Info("Track upgraded to simulcast",
-				zap.String("peerID", p.ID),
-				zap.String("trackID", existing.ID),
-				zap.String("rid", rid),
-			)
-
-			go r.startLayerFanOut(existing, rid)
-			return
-		}
-
-		// Duplicate non-simulcast OnTrack for same track ID — ignore
+	// Pion may fire OnTrack multiple times for the same track ID (e.g. once
+	// with RID="" then again with RID="h"). Just ignore duplicates.
+	if _, ok := r.MediaTracks[track.ID()]; ok {
 		r.mu.Unlock()
 		r.logger.Debug("Ignoring duplicate OnTrack",
 			zap.String("peerID", p.ID),
 			zap.String("trackID", track.ID()),
+			zap.String("rid", track.RID()),
 		)
-		return
-	}
-
-	// ---- Simulcast: additional layer for existing track (different track ID, same base) ----
-	if rid != "" && r.simulcastEnabled {
-		var existingTrack *MediaTrack
-		for _, mt := range r.MediaTracks {
-			if mt.PeerID == p.ID && mt.BaseTrackID == baseTrackID && mt.IsSimulcast {
-				existingTrack = mt
-				break
-			}
-		}
-
-		if existingTrack != nil {
-			existingTrack.mu.Lock()
-			existingTrack.Layers[rid] = &SimulcastLayer{
-				RID:    rid,
-				Track:  track,
-				Active: true,
-			}
-			existingTrack.mu.Unlock()
-			r.mu.Unlock()
-
-			r.logger.Info("Simulcast layer added",
-				zap.String("peerID", p.ID),
-				zap.String("trackID", existingTrack.ID),
-				zap.String("rid", rid),
-			)
-
-			go r.startLayerFanOut(existingTrack, rid)
-			return
-		}
-
-		// First layer of a new simulcast track
-		trackCtx, trackCancel := context.WithCancel(r.ctx)
-		mediaTrack := &MediaTrack{
-			ID:            track.ID(),
-			PeerID:        p.ID,
-			Kind:          track.Kind().String(),
-			Track:         track,
-			Receiver:      receiver,
-			Subscribers:   make(map[string]*SubscriberState),
-			LocalTracks:   make(map[string]*webrtc.TrackLocalStaticRTP),
-			CreatedAt:     time.Now(),
-			ctx:           trackCtx,
-			cancel:        trackCancel,
-			fanOutStarted: false,
-			IsSimulcast:   true,
-			BaseTrackID:   baseTrackID,
-			Layers: map[string]*SimulcastLayer{
-				rid: {RID: rid, Track: track, Active: true},
-			},
-		}
-
-		if track.Kind() == webrtc.RTPCodecTypeVideo {
-			if track.StreamID() == "screen" {
-				mediaTrack.MediaType = peer.MediaTypeScreen
-			} else {
-				mediaTrack.MediaType = peer.MediaTypeVideo
-			}
-		} else {
-			mediaTrack.MediaType = peer.MediaTypeAudio
-		}
-
-		r.MediaTracks[track.ID()] = mediaTrack
-		r.mu.Unlock()
-
-		r.logger.Debug("Simulcast track added",
-			zap.String("peerID", p.ID),
-			zap.String("trackID", track.ID()),
-			zap.String("rid", rid),
-		)
-
-		if r.OnTrackAdded != nil {
-			r.OnTrackAdded(r, p, mediaTrack)
-		}
-
-		go r.startLayerFanOut(mediaTrack, rid)
-		go r.forwardTrackToOtherPeers(mediaTrack, p.ID)
 		return
 	}
 
@@ -555,6 +441,9 @@ func (r *Room) handlePeerTrackAdded(p *peer.Peer, track *webrtc.TrackRemote, rec
 
 	go r.startFanOutForwarding(mediaTrack)
 	go r.forwardTrackToOtherPeers(mediaTrack, p.ID)
+	if mediaTrack.Kind == "video" {
+		go r.periodicPLI(mediaTrack)
+	}
 }
 
 func (r *Room) isCodecAllowed(mimeType string) bool {
@@ -603,13 +492,19 @@ func (r *Room) AddExistingTracksToPeer(newPeer *peer.Peer) int {
 
 	added := 0
 	for _, mediaTrack := range tracks {
+		r.logger.Info("Adding existing track to new peer",
+			zap.String("newPeerID", newPeer.ID),
+			zap.String("trackID", mediaTrack.ID),
+			zap.String("kind", mediaTrack.Kind),
+			zap.String("fromPeer", mediaTrack.PeerID),
+		)
 		if r.forwardTrackToPeerDirect(mediaTrack, newPeer) {
 			added++
 		}
 	}
 
 	if added > 0 {
-		r.logger.Debug("Added existing tracks to new peer before answer",
+		r.logger.Info("Added existing tracks to new peer before answer",
 			zap.String("newPeerID", newPeer.ID),
 			zap.Int("trackCount", added),
 		)
@@ -633,6 +528,13 @@ func (r *Room) forwardTrackToOtherPeers(mediaTrack *MediaTrack, excludePeerID st
 	}
 	r.mu.RUnlock()
 
+	r.logger.Info("Forwarding track to other peers",
+		zap.String("trackID", mediaTrack.ID),
+		zap.String("kind", mediaTrack.Kind),
+		zap.String("fromPeer", mediaTrack.PeerID),
+		zap.Int("targetPeers", len(peers)),
+	)
+
 	for _, p := range peers {
 		go r.forwardTrackToPeer(mediaTrack, p)
 	}
@@ -645,10 +547,47 @@ func (r *Room) forwardTrackToPeer(mediaTrack *MediaTrack, targetPeer *peer.Peer)
 		if mediaTrack.Kind == "video" {
 			r.requestPLI(mediaTrack, 20*time.Millisecond)
 		}
+		return
 	}
+
+	// AddTrack failed (likely no free transceivers). Trigger renegotiation so the
+	// client can add more transceivers, then retry once.
+	r.logger.Warn("Track forwarding failed, requesting renegotiation for retry",
+		zap.String("trackID", mediaTrack.ID),
+		zap.String("toPeer", targetPeer.ID),
+	)
+	r.triggerRenegotiation(targetPeer)
+
+	go func() {
+		time.Sleep(2 * time.Second) // wait for renegotiation round-trip
+		r.mu.RLock()
+		_, stillExists := r.Peers[targetPeer.ID]
+		r.mu.RUnlock()
+		if !stillExists {
+			return
+		}
+		if r.forwardTrackToPeerDirect(mediaTrack, targetPeer) {
+			r.triggerRenegotiation(targetPeer)
+			if mediaTrack.Kind == "video" {
+				r.requestPLI(mediaTrack, 20*time.Millisecond)
+			}
+		}
+	}()
 }
 
 func (r *Room) forwardTrackToPeerDirect(mediaTrack *MediaTrack, targetPeer *peer.Peer) bool {
+	// Dedup: don't add the same track to the same peer twice
+	mediaTrack.mu.RLock()
+	_, alreadySubscribed := mediaTrack.Subscribers[targetPeer.ID]
+	mediaTrack.mu.RUnlock()
+	if alreadySubscribed {
+		r.logger.Debug("Track already forwarded to peer, skipping",
+			zap.String("trackID", mediaTrack.ID),
+			zap.String("toPeer", targetPeer.ID),
+		)
+		return false
+	}
+
 	localTrack, err := webrtc.NewTrackLocalStaticRTP(
 		webrtc.RTPCodecCapability{MimeType: mediaTrack.Track.Codec().MimeType},
 		mediaTrack.ID+"_to_"+targetPeer.ID,
@@ -727,6 +666,38 @@ func (r *Room) requestPLI(mediaTrack *MediaTrack, delay time.Duration) {
 				r.logger.Debug("Failed to send PLI", zap.Error(err))
 			}
 		}()
+	}
+}
+
+// periodicPLI sends a PLI (keyframe request) every 2 seconds for a video track.
+// Without periodic PLIs, any packet loss causes permanent video freeze.
+func (r *Room) periodicPLI(mediaTrack *MediaTrack) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-mediaTrack.ctx.Done():
+			return
+		case <-ticker.C:
+			r.mu.RLock()
+			sourcePeer, exists := r.Peers[mediaTrack.PeerID]
+			r.mu.RUnlock()
+			if !exists || sourcePeer == nil {
+				return
+			}
+
+			// For simulcast tracks, send PLI for each layer
+			if mediaTrack.IsSimulcast {
+				mediaTrack.mu.RLock()
+				for _, layer := range mediaTrack.Layers {
+					sourcePeer.SendPLI(uint32(layer.Track.SSRC()))
+				}
+				mediaTrack.mu.RUnlock()
+			} else {
+				sourcePeer.SendPLI(uint32(mediaTrack.Track.SSRC()))
+			}
+		}
 	}
 }
 

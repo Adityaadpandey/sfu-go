@@ -1,8 +1,16 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useRoomStore } from "../store/useRoomStore";
 import { SignalingMessage, ConnectionQuality } from "../types";
 
-const WS_URL = "ws://localhost:8080/ws";
+const DEFAULT_WS_URL = "ws://localhost:8080/ws";
+
+function resolveWsUrl() {
+    if (typeof window === "undefined") return DEFAULT_WS_URL;
+    const env = process.env.NEXT_PUBLIC_WS_URL;
+    if (env && env.trim()) return env.trim();
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}/ws`;
+}
 
 const ICE_SERVERS = {
     iceServers: [
@@ -40,6 +48,12 @@ export const useWebRTC = () => {
     const localStreamRef = useRef<MediaStream | null>(null);
     const screenStreamRef = useRef<MediaStream | null>(null);
     const statsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const cameraTrackBeforeScreenRef = useRef<MediaStreamTrack | null>(null);
+
+    const reconnectTimerRef = useRef<number | null>(null);
+    const reconnectAttemptsRef = useRef(0);
+    const disconnectRequestedRef = useRef(false);
+    const maxReconnectAttempts = 10;
 
     // Negotiation state
     const negRef = useRef(false);       // _neg
@@ -50,6 +64,8 @@ export const useWebRTC = () => {
     // Connection info for reconnects
     const connectionInfo = useRef({ roomId: "", userId: "", name: "" });
     const peerIdRef = useRef<string>("");
+
+    const wsUrl = useMemo(() => resolveWsUrl(), []);
 
     // --- Logging Helper ---
     const log = useCallback((message: string, type: "info" | "success" | "warning" | "error" = "info") => {
@@ -80,12 +96,22 @@ export const useWebRTC = () => {
             screenStreamRef.current.getTracks().forEach(t => t.stop());
             screenStreamRef.current = null;
         }
+        if (cameraTrackBeforeScreenRef.current) {
+            cameraTrackBeforeScreenRef.current.stop();
+            cameraTrackBeforeScreenRef.current = null;
+        }
         
         negRef.current = false;
         negPendRef.current = false;
         negReadyRef.current = false;
         iceBufRef.current = [];
         peerIdRef.current = "";
+
+        if (reconnectTimerRef.current) {
+            window.clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+        }
+        reconnectAttemptsRef.current = 0;
     }, []);
 
     const sendSignalingMessage = useCallback((msg: SignalingMessage | { type: string, data?: unknown }) => {
@@ -101,6 +127,63 @@ export const useWebRTC = () => {
             log("WebSocket not open, cannot send " + msg.type, "warning");
         }
     }, [log]);
+
+    const ensureRecvonlyTransceivers = useCallback((neededTracks: number) => {
+        // Server may ask us to renegotiate with a trackCount hint.
+        // Ensure we have enough free recvonly transceivers to receive all streams.
+        if (!pcRef.current) return;
+        const pc = pcRef.current;
+
+        const transceivers = pc.getTransceivers();
+        let freeVideo = 0;
+        let freeAudio = 0;
+
+        for (const t of transceivers) {
+            if (t.direction !== "recvonly") continue;
+            const tr = t.receiver?.track;
+            const kind = tr?.kind;
+            const free = !tr || tr.readyState === "ended";
+            if (!free) continue;
+            if (kind === "audio") freeAudio++;
+            else if (kind === "video") freeVideo++;
+            else freeVideo++; // default
+        }
+
+        const halfNeeded = Math.ceil(neededTracks / 2);
+        const videoToAdd = Math.max(0, halfNeeded - freeVideo);
+        const audioToAdd = Math.max(0, halfNeeded - freeAudio);
+
+        for (let i = 0; i < videoToAdd; i++) pc.addTransceiver("video", { direction: "recvonly" });
+        for (let i = 0; i < audioToAdd; i++) pc.addTransceiver("audio", { direction: "recvonly" });
+
+        if (videoToAdd + audioToAdd > 0) {
+            log(`Added ${videoToAdd}v+${audioToAdd}a transceivers`, "warning");
+        }
+    }, [log]);
+
+    const replaceLocalTrack = useCallback(async (kind: "audio" | "video", newTrack: MediaStreamTrack) => {
+        // Replace in sender (if any)
+        if (pcRef.current) {
+            const sender = pcRef.current.getSenders().find(s => s.track?.kind === kind);
+            if (sender) {
+                await sender.replaceTrack(newTrack);
+            }
+        }
+
+        // Replace in local stream ref
+        if (localStreamRef.current) {
+            const old = (kind === "audio"
+                ? localStreamRef.current.getAudioTracks()[0]
+                : localStreamRef.current.getVideoTracks()[0]
+            );
+            if (old) {
+                localStreamRef.current.removeTrack(old);
+                old.stop();
+            }
+            localStreamRef.current.addTrack(newTrack);
+            setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+        }
+    }, [setLocalStream]);
 
     // --- Quality Stats Tracking ---
     const startStatsTracking = useCallback(() => {
@@ -203,14 +286,30 @@ export const useWebRTC = () => {
 
         // Initialize Local Media
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
-                video: { width: 640, height: 480, frameRate: 30 },
-            });
+            let stream = localStreamRef.current;
+            if (!stream) {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        deviceId: settings.selectedMicId ? { exact: settings.selectedMicId } : undefined,
+                        noiseSuppression: settings.noiseSuppression,
+                        echoCancellation: settings.echoCancellation,
+                        autoGainControl: settings.autoGainControl,
+                    },
+                    video: {
+                        deviceId: settings.selectedCameraId ? { exact: settings.selectedCameraId } : undefined,
+                        width: settings.hdVideo ? 1280 : 640,
+                        height: settings.hdVideo ? 720 : 480,
+                        frameRate: 30,
+                    },
+                });
 
-            localStreamRef.current = stream;
-            setLocalStream(stream);
-            log("Camera + mic acquired", "success");
+                localStreamRef.current = stream;
+                setLocalStream(stream);
+                log("Camera + mic acquired", "success");
+            } else {
+                setLocalStream(stream);
+                log("Reusing existing local media", "info");
+            }
 
             // Safety check: if PC was closed during getUserMedia
             if (pc.signalingState === 'closed') {
@@ -222,28 +321,22 @@ export const useWebRTC = () => {
             const videoTrack = stream.getVideoTracks()[0];
             const audioTrack = stream.getAudioTracks()[0];
 
-            if (videoTrack) {
-                pc.addTransceiver(videoTrack, {
-                    direction: 'sendrecv',
-                    sendEncodings: [
-                        { rid: 'h', maxBitrate: 1500000 },
-                        { rid: 'm', maxBitrate: 500000, scaleResolutionDownBy: 2 },
-                        { rid: 'l', maxBitrate: 150000, scaleResolutionDownBy: 4 }
-                    ]
-                });
-            }
+            // Apply initial enabled state based on UI toggles
+            if (videoTrack) videoTrack.enabled = isCameraOn;
+            if (audioTrack) audioTrack.enabled = isMicOn;
 
-            if (audioTrack) {
-                pc.addTrack(audioTrack, stream);
-            }
+            // Match reference client behavior: send plain tracks (no simulcast sendEncodings)
+            if (videoTrack) pc.addTrack(videoTrack, stream);
+            if (audioTrack) pc.addTrack(audioTrack, stream);
 
             // Pre-allocate recvonly transceivers for potential remote peers
-            // 3 audio and 3 video as per reference implementation
-            for (let i = 0; i < 3; i++) pc.addTransceiver('video', { direction: 'recvonly' });
-            for (let i = 0; i < 3; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
+            // Reference uses 10+10 to support many peers
+            for (let i = 0; i < 10; i++) pc.addTransceiver('video', { direction: 'recvonly' });
+            for (let i = 0; i < 10; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
 
         } catch (err) {
             log("Media error: " + err, "error");
+            setStatus("error");
             return;
         }
 
@@ -262,24 +355,17 @@ export const useWebRTC = () => {
         };
 
         pc.ontrack = (event) => {
-            const stream = event.streams[0] || new MediaStream();
-            if (event.streams.length === 0) {
-                stream.addTrack(event.track);
-            }
+            // Pion may deliver tracks without stream association.
+            // If so, create a synthetic stream for this track.
+            const stream = event.streams[0] || new MediaStream([event.track]);
             // Convention: stream.id is the source peerID
             const sourcePeerId = stream.id;
 
-            log(`Video: ${sourcePeerId.slice(0, 8)}`, "success");
+            log(`ontrack: kind=${event.track.kind} streams=${event.streams.length} id=${event.track.id.slice(0, 8)}`, "info");
             addRemoteTrack(sourcePeerId, event.track, stream);
-            
-            // Update track count
-            const currentCount = useRoomStore.getState().trackCount;
-            setTrackCount(currentCount + 1);
 
             event.track.onended = () => {
                 removeRemoteTrack(sourcePeerId, event.track.id);
-                const currentCount = useRoomStore.getState().trackCount;
-                setTrackCount(Math.max(0, currentCount - 1));
             };
         };
 
@@ -302,7 +388,10 @@ export const useWebRTC = () => {
                     negPendRef.current = false;
                     negotiate();
                 }
-            } else if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+            } else if (state === 'failed') {
+                log("WebRTC failed, closing WebSocket to trigger reconnect", "error");
+                try { wsRef.current?.close(); } catch { /* ignore */ }
+            } else if (state === 'closed' || state === 'disconnected') {
                 if (statsIntervalRef.current) {
                     clearInterval(statsIntervalRef.current);
                     statsIntervalRef.current = null;
@@ -312,7 +401,7 @@ export const useWebRTC = () => {
 
         // Start initial negotiation
         await negotiate();
-    }, [setLocalStream, log, sendSignalingMessage, addRemoteTrack, setTrackCount, removeRemoteTrack, negotiate, startStatsTracking]);
+    }, [setLocalStream, log, sendSignalingMessage, addRemoteTrack, removeRemoteTrack, negotiate, startStatsTracking, settings.selectedMicId, settings.selectedCameraId, settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, settings.hdVideo, isCameraOn, isMicOn, setStatus]);
 
     const handleSignalingMessage = useCallback(async (msg: SignalingMessage | Record<string, unknown>) => {
         switch (msg.type) {
@@ -432,8 +521,14 @@ export const useWebRTC = () => {
                 const reason = msg.data && typeof msg.data === 'object' && 'reason' in msg.data 
                     ? (msg.data as { reason: string }).reason 
                     : "unknown";
+                const trackCount = msg.data && typeof msg.data === "object" && "trackCount" in msg.data
+                    ? Number((msg.data as { trackCount: unknown }).trackCount)
+                    : null;
                 log("Server wants renegotiation: " + reason, "info");
                 if (!pcRef.current) return;
+                if (trackCount && Number.isFinite(trackCount) && trackCount > 0) {
+                    ensureRecvonlyTransceivers(trackCount);
+                }
                 if (negRef.current) {
                     negPendRef.current = true;
                 } else {
@@ -465,6 +560,18 @@ export const useWebRTC = () => {
                             level: qualityData.level as ConnectionQuality["level"],
                             packetLoss: qualityData.packetLoss
                         });
+
+                        // Reference behavior: auto layer switching for local peer on poor connection.
+                        if (settings.autoQuality && qualityData.peerId === peerIdRef.current && qualityData.level === "poor") {
+                            const layersByTrack = useRoomStore.getState().simulcastLayers;
+                            Object.entries(layersByTrack).forEach(([trackId, layers]) => {
+                                if (layers.includes("l")) {
+                                    sendSignalingMessage({ type: "layer-switch", data: { trackId, targetRid: "l" } });
+                                } else if (layers.includes("m")) {
+                                    sendSignalingMessage({ type: "layer-switch", data: { trackId, targetRid: "m" } });
+                                }
+                            });
+                        }
                     }
                 }
                 break;
@@ -494,8 +601,9 @@ export const useWebRTC = () => {
         setStatus("connecting");
         setRoomInfo(newRoomId, newUserId, newName);
         connectionInfo.current = { roomId: newRoomId, userId: newUserId, name: newName };
+        disconnectRequestedRef.current = false;
         
-        const ws = new WebSocket(`${WS_URL}?userId=${encodeURIComponent(newUserId)}&name=${encodeURIComponent(newName)}`);
+        const ws = new WebSocket(`${wsUrl}?userId=${encodeURIComponent(newUserId)}&name=${encodeURIComponent(newName)}`);
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -528,7 +636,23 @@ export const useWebRTC = () => {
         ws.onclose = (event) => {
             log(`WebSocket closed (${event.code})`, "warning");
             setStatus("disconnected");
+
+            // Keep store state; allow reconnect attempts unless user explicitly disconnected.
             cleanup();
+
+            if (!disconnectRequestedRef.current && connectionInfo.current.roomId) {
+                if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+                    log("Max reconnect attempts reached", "error");
+                    return;
+                }
+                reconnectAttemptsRef.current += 1;
+                const delay = Math.min(1000 * Math.pow(1.5, reconnectAttemptsRef.current - 1), 15000);
+                log(`Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${reconnectAttemptsRef.current})...`, "warning");
+                reconnectTimerRef.current = window.setTimeout(() => {
+                    const info = connectionInfo.current;
+                    connect(info.roomId, info.userId, info.name);
+                }, delay);
+            }
         };
 
         ws.onerror = () => {
@@ -536,6 +660,73 @@ export const useWebRTC = () => {
             setStatus("error");
         };
     }, [setStatus, setRoomInfo, log, sendSignalingMessage, handleSignalingMessage, cleanup]);
+
+    // --- React to device/settings changes (swap tracks without full reconnect) ---
+    useEffect(() => {
+        // Only attempt swaps when we have a stream + PC established and we're not screensharing.
+        if (!pcRef.current || !localStreamRef.current) return;
+        if (isScreenShareOn) return;
+
+        let cancelled = false;
+
+        const apply = async () => {
+            try {
+                // Video device / HD changes
+                if (settings.selectedCameraId || settings.hdVideo) {
+                    const camStream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            deviceId: settings.selectedCameraId ? { exact: settings.selectedCameraId } : undefined,
+                            width: settings.hdVideo ? 1280 : 640,
+                            height: settings.hdVideo ? 720 : 480,
+                            frameRate: 30,
+                        }
+                    });
+                    const newVideo = camStream.getVideoTracks()[0];
+                    if (!newVideo) {
+                        camStream.getTracks().forEach(t => t.stop());
+                    } else {
+                        newVideo.enabled = isCameraOn;
+                        if (!cancelled) {
+                            await replaceLocalTrack("video", newVideo);
+                        } else {
+                            newVideo.stop();
+                        }
+                    }
+                }
+
+                // Audio device / processing changes
+                if (settings.selectedMicId || settings.noiseSuppression || settings.echoCancellation || settings.autoGainControl) {
+                    const micStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            deviceId: settings.selectedMicId ? { exact: settings.selectedMicId } : undefined,
+                            noiseSuppression: settings.noiseSuppression,
+                            echoCancellation: settings.echoCancellation,
+                            autoGainControl: settings.autoGainControl,
+                        }
+                    });
+                    const newAudio = micStream.getAudioTracks()[0];
+                    if (!newAudio) {
+                        micStream.getTracks().forEach(t => t.stop());
+                    } else {
+                        newAudio.enabled = isMicOn;
+                        if (!cancelled) {
+                            await replaceLocalTrack("audio", newAudio);
+                        } else {
+                            newAudio.stop();
+                        }
+                    }
+                }
+            } catch (e) {
+                log("Failed to apply device settings: " + e, "warning");
+            }
+        };
+
+        apply();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [settings.selectedCameraId, settings.selectedMicId, settings.hdVideo, settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl, replaceLocalTrack, log, isScreenShareOn, isCameraOn, isMicOn]);
 
     // --- Media Controls ---
 
@@ -554,23 +745,33 @@ export const useWebRTC = () => {
     }, [isCameraOn, setMediaState]);
 
     const toggleScreenShare = useCallback(async () => {
-        if (isScreenShareOn) {
+        const stopScreenShareAndRevert = async () => {
             // Stop Screen Share -> Revert to Camera
             try {
-                // Get Camera Stream
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                const videoTrack = stream.getVideoTracks()[0];
+                const camTrack = cameraTrackBeforeScreenRef.current;
+                let videoTrack = camTrack;
+
+                if (!videoTrack || videoTrack.readyState === "ended") {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            deviceId: settings.selectedCameraId ? { exact: settings.selectedCameraId } : undefined,
+                            width: settings.hdVideo ? 1280 : 640,
+                            height: settings.hdVideo ? 720 : 480,
+                            frameRate: 30,
+                        }
+                    });
+                    videoTrack = stream.getVideoTracks()[0];
+                }
 
                 if (pcRef.current) {
-                    const senders = pcRef.current.getSenders();
-                    const sender = senders.find(s => s.track?.kind === "video");
-                    if (sender) {
+                    const sender = pcRef.current.getSenders().find(s => s.track?.kind === "video");
+                    if (sender && videoTrack) {
                         await sender.replaceTrack(videoTrack);
                     }
                 }
 
                 // Update local stream ref (replace the video track)
-                if (localStreamRef.current) {
+                if (localStreamRef.current && videoTrack) {
                     const oldTrack = localStreamRef.current.getVideoTracks()[0];
                     if (oldTrack) {
                         localStreamRef.current.removeTrack(oldTrack);
@@ -586,18 +787,26 @@ export const useWebRTC = () => {
                     screenStreamRef.current = null;
                 }
 
+                cameraTrackBeforeScreenRef.current = null;
                 setMediaState("screen", false);
                 setMediaState("camera", true);
                 log("Screen sharing stopped", "info");
             } catch (e) {
                 log("Failed to revert to camera: " + e, "error");
             }
+        };
+
+        if (isScreenShareOn) {
+            await stopScreenShareAndRevert();
         } else {
             // Start Screen Share
             try {
                 const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 const screenTrack = screenStream.getVideoTracks()[0];
                 screenStreamRef.current = screenStream;
+
+                // Preserve the current camera track so we can revert without re-acquiring.
+                cameraTrackBeforeScreenRef.current = localStreamRef.current?.getVideoTracks()[0] || null;
 
                 if (pcRef.current) {
                     const senders = pcRef.current.getSenders();
@@ -610,9 +819,7 @@ export const useWebRTC = () => {
                 // Handle user stopping via browser UI
                 screenTrack.onended = () => {
                     log("Screen sharing ended", "info");
-                    // We'll handle this through the UI state change
-                    setMediaState("screen", false);
-                    setMediaState("camera", true);
+                    stopScreenShareAndRevert();
                 };
 
                 // Update local stream ref
@@ -620,7 +827,7 @@ export const useWebRTC = () => {
                     const oldTrack = localStreamRef.current.getVideoTracks()[0];
                     if (oldTrack) {
                         localStreamRef.current.removeTrack(oldTrack);
-                        oldTrack.stop();
+                        // do not stop camera track; we may revert to it
                     }
                     localStreamRef.current.addTrack(screenTrack);
                     setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
@@ -633,7 +840,7 @@ export const useWebRTC = () => {
                 log("Screen sharing error: " + e, "error");
             }
         }
-    }, [isScreenShareOn, setMediaState, setLocalStream, log]);
+    }, [isScreenShareOn, setMediaState, setLocalStream, log, settings.selectedCameraId, settings.hdVideo]);
 
     // --- Layer Switching ---
     const switchLayer = useCallback((trackId: string, targetRid: string) => {
@@ -646,6 +853,7 @@ export const useWebRTC = () => {
 
     // --- Disconnect ---
     const disconnect = useCallback(() => {
+        disconnectRequestedRef.current = true;
         if (wsRef.current?.readyState === WebSocket.OPEN) {
             sendSignalingMessage({
                 type: "leave",

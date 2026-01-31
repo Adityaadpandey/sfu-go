@@ -1,10 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { useRoomStore } from "@/store/useRoomStore";
-import { useWebRTCContext } from "@/components/webrtc-provider";
 import { 
   Users, 
   Shield, 
@@ -27,15 +25,15 @@ interface TopBarProps {
 export function TopBar({ roomId, participantCount, onToggleSidePanel, showSidePanel }: TopBarProps) {
   const [copied, setCopied] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const { status, dominantSpeakerId, peers, userName } = useRoomStore();
+  const { status, dominantSpeakerId, peers } = useRoomStore();
 
   // Update time every minute
-  useState(() => {
+  useEffect(() => {
     const interval = setInterval(() => {
       setCurrentTime(new Date());
     }, 60000);
     return () => clearInterval(interval);
-  });
+  }, []);
 
   const copyRoomId = async () => {
     try {
