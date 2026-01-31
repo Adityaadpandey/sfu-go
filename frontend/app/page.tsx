@@ -1,11 +1,7 @@
 "use client";
 
 import { JoinScreen } from "@/components/join-screen";
-import { Controls } from "@/components/room/controls";
-import { VideoGrid } from "@/components/room/video-grid";
-import { StatusBar } from "@/components/room/status-bar";
-import { LoggingPanel } from "@/components/room/logging-panel";
-import { SettingsModal } from "@/components/room/settings-modal";
+import { MeetingRoom } from "@/components/meeting-room";
 import { WebRTCProvider } from "@/components/webrtc-provider";
 import { useRoomStore } from "@/store/useRoomStore";
 
@@ -15,17 +11,13 @@ export default function Home() {
 
   return (
     <WebRTCProvider>
-      {!isConnected ? (
-        <JoinScreen />
-      ) : (
-        <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100">
-          <StatusBar />
-          <VideoGrid />
-          <Controls />
-          <LoggingPanel />
-          <SettingsModal />
-        </div>
-      )}
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        {!isConnected ? (
+          <JoinScreen />
+        ) : (
+          <MeetingRoom />
+        )}
+      </div>
     </WebRTCProvider>
   );
 }

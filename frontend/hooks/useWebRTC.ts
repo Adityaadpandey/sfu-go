@@ -102,6 +102,70 @@ export const useWebRTC = () => {
         }
     }, [log]);
 
+    // --- Quality Stats Tracking ---
+    const startStatsTracking = useCallback(() => {
+        if (!pcRef.current || statsIntervalRef.current) return;
+
+        statsIntervalRef.current = setInterval(async () => {
+            if (!pcRef.current) return;
+
+            try {
+                const stats = await pcRef.current.getStats();
+                const inboundStats: RTCInboundRtpStreamStats[] = [];
+                const outboundStats: RTCOutboundRtpStreamStats[] = [];
+
+                stats.forEach((report) => {
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                        inboundStats.push(report as RTCInboundRtpStreamStats);
+                    } else if (report.type === 'outbound-rtp' && report.kind === 'video') {
+                        outboundStats.push(report as RTCOutboundRtpStreamStats);
+                    }
+                });
+
+                // Calculate quality for local peer (outbound)
+                if (outboundStats.length > 0) {
+                    // Note: packetsLost might not be available on outbound stats
+                    const lossRate = 0; // For outbound, we can't easily calculate loss
+
+                    let level: ConnectionQuality["level"] = "excellent";
+                    if (lossRate > 5) level = "critical";
+                    else if (lossRate > 2) level = "poor";
+                    else if (lossRate > 0.5) level = "good";
+
+                    setPeerQuality(peerIdRef.current, { level, packetLoss: lossRate });
+
+                    // Auto quality switching
+                    if (settings.autoQuality && level === "poor") {
+                        // Request lower layer for simulcast tracks
+                        // This would need to be implemented based on available layers
+                        log(`Poor connection detected (${lossRate.toFixed(1)}% loss), consider switching to lower quality`, "warning");
+                    }
+                }
+
+                // Calculate quality for remote peers (inbound)
+                inboundStats.forEach((inbound) => {
+                    const packetLoss = inbound.packetsLost || 0;
+                    const packetsReceived = inbound.packetsReceived || 1;
+                    const lossRate = (packetLoss / packetsReceived) * 100;
+
+                    let level: ConnectionQuality["level"] = "excellent";
+                    if (lossRate > 5) level = "critical";
+                    else if (lossRate > 2) level = "poor";
+                    else if (lossRate > 0.5) level = "good";
+
+                    // We'd need to map this to a specific peer ID
+                    // For now, just log it
+                    if (lossRate > 1) {
+                        log(`Remote stream quality: ${level} (${lossRate.toFixed(1)}% loss)`, "warning");
+                    }
+                });
+
+            } catch (error) {
+                console.error("Error collecting stats:", error);
+            }
+        }, 2000); // Check every 2 seconds
+    }, [setPeerQuality, settings.autoQuality, log]);
+
     // --- WebRTC Handling ---
     const negotiate = useCallback(async () => {
         if (negRef.current || !pcRef.current) return;
@@ -248,71 +312,7 @@ export const useWebRTC = () => {
 
         // Start initial negotiation
         await negotiate();
-    }, [setLocalStream, log, sendSignalingMessage, addRemoteTrack, setTrackCount, removeRemoteTrack, negotiate]);
-
-    // --- Quality Stats Tracking ---
-    const startStatsTracking = useCallback(() => {
-        if (!pcRef.current || statsIntervalRef.current) return;
-
-        statsIntervalRef.current = setInterval(async () => {
-            if (!pcRef.current) return;
-
-            try {
-                const stats = await pcRef.current.getStats();
-                const inboundStats: RTCInboundRtpStreamStats[] = [];
-                const outboundStats: RTCOutboundRtpStreamStats[] = [];
-
-                stats.forEach((report) => {
-                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
-                        inboundStats.push(report as RTCInboundRtpStreamStats);
-                    } else if (report.type === 'outbound-rtp' && report.kind === 'video') {
-                        outboundStats.push(report as RTCOutboundRtpStreamStats);
-                    }
-                });
-
-                // Calculate quality for local peer (outbound)
-                if (outboundStats.length > 0) {
-                    // Note: packetsLost might not be available on outbound stats
-                    const lossRate = 0; // For outbound, we can't easily calculate loss
-
-                    let level: ConnectionQuality["level"] = "excellent";
-                    if (lossRate > 5) level = "critical";
-                    else if (lossRate > 2) level = "poor";
-                    else if (lossRate > 0.5) level = "good";
-
-                    setPeerQuality(peerIdRef.current, { level, packetLoss: lossRate });
-
-                    // Auto quality switching
-                    if (settings.autoQuality && level === "poor") {
-                        // Request lower layer for simulcast tracks
-                        // This would need to be implemented based on available layers
-                        log(`Poor connection detected (${lossRate.toFixed(1)}% loss), consider switching to lower quality`, "warning");
-                    }
-                }
-
-                // Calculate quality for remote peers (inbound)
-                inboundStats.forEach((inbound) => {
-                    const packetLoss = inbound.packetsLost || 0;
-                    const packetsReceived = inbound.packetsReceived || 1;
-                    const lossRate = (packetLoss / packetsReceived) * 100;
-
-                    let level: ConnectionQuality["level"] = "excellent";
-                    if (lossRate > 5) level = "critical";
-                    else if (lossRate > 2) level = "poor";
-                    else if (lossRate > 0.5) level = "good";
-
-                    // We'd need to map this to a specific peer ID
-                    // For now, just log it
-                    if (lossRate > 1) {
-                        log(`Remote stream quality: ${level} (${lossRate.toFixed(1)}% loss)`, "warning");
-                    }
-                });
-
-            } catch (error) {
-                console.error("Error collecting stats:", error);
-            }
-        }, 2000); // Check every 2 seconds
-    }, [setPeerQuality, settings.autoQuality, log]);
+    }, [setLocalStream, log, sendSignalingMessage, addRemoteTrack, setTrackCount, removeRemoteTrack, negotiate, startStatsTracking]);
 
     const handleSignalingMessage = useCallback(async (msg: SignalingMessage | Record<string, unknown>) => {
         switch (msg.type) {

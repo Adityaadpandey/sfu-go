@@ -134,6 +134,12 @@ class SFU {
         this._negReady = false;
         this._iceBuf = [];
 
+        // Reconnect state
+        this._reconnecting = false;
+        this._reconnectAttempts = 0;
+        this._maxReconnectAttempts = 10;
+        this._reconnectTimer = null;
+
         // Dominant speaker
         this.dominantSpeaker = null;
 
@@ -195,6 +201,10 @@ class SFU {
     }
 
     leave() {
+        this._reconnecting = false;
+        this._reconnectAttempts = 0;
+        if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+        this.roomId = null; // prevent auto-reconnect
         if (this.ws?.readyState === 1) {
             this.ws.send(JSON.stringify({type:'leave',timestamp:new Date().toISOString()}));
             this.ws.close();
@@ -227,8 +237,34 @@ class SFU {
             this._send('join', { roomId:this.roomId, userId:this.userName, name:this.userName });
         };
         this.ws.onmessage = e => { try { this._onMsg(JSON.parse(e.data)); } catch(err) { this.log('Parse: '+err.message,'er'); }};
-        this.ws.onclose = e => { this.log('WS closed ('+e.code+')','wn'); this.ui(); };
+        this.ws.onclose = e => {
+            this.log('WS closed ('+e.code+')','wn');
+            this.ui();
+            this._tryReconnect();
+        };
         this.ws.onerror = () => this.log('WS error','er');
+    }
+
+    _tryReconnect() {
+        if (!this.roomId || !this.userName) return; // never joined
+        if (this._reconnecting && this._reconnectAttempts >= this._maxReconnectAttempts) {
+            this.log('Max reconnect attempts reached', 'er');
+            return;
+        }
+        this._reconnecting = true;
+        this._reconnectAttempts++;
+        const delay = Math.min(1000 * Math.pow(1.5, this._reconnectAttempts - 1), 15000);
+        this.log(`Reconnecting in ${(delay/1000).toFixed(1)}s (attempt ${this._reconnectAttempts})...`, 'wn');
+        this._reconnectTimer = setTimeout(() => {
+            // Tear down old PC
+            this.pc?.close(); this.pc = null;
+            this.tiles.forEach(t => t.el?.remove()); this.tiles.clear();
+            this.peers.clear();
+            this.trackCount = 0;
+            this._neg = false; this._negPend = false; this._negReady = false;
+            this._iceBuf = [];
+            this._connectWS();
+        }, delay);
     }
 
     _send(type, data) {
@@ -256,6 +292,8 @@ class SFU {
     // ---- Signaling handlers ----
     async _onJoin(d) {
         if (!d.success) { this.log('Join failed','er'); return; }
+        this._reconnecting = false;
+        this._reconnectAttempts = 0;
         this.peerId = d.peerId;
         this.log('Joined -- peer ' + this.peerId.slice(0,8), 'ok');
         document.getElementById('joinBtn').disabled = true;
@@ -310,8 +348,38 @@ class SFU {
     async _onRenegotiate(d) {
         this.log('Server wants renegotiation: ' + d.reason);
         if (!this.pc) return;
+
+        // Ensure we have enough recvonly transceivers for the server's tracks
+        if (d.trackCount) {
+            this._ensureTransceivers(d.trackCount);
+        }
+
         if (this._neg) { this._negPend = true; return; }
         await this._negotiate();
+    }
+
+    _ensureTransceivers(needed) {
+        const transceivers = this.pc.getTransceivers();
+        let freeVideo = 0, freeAudio = 0;
+        for (const t of transceivers) {
+            if (t.direction === 'recvonly' || t.direction === 'sendrecv') {
+                if (!t.receiver?.track || t.receiver.track.readyState === 'ended' || !t.receiver.track.id) continue;
+                // count unused recvonly
+            }
+            if (t.direction === 'recvonly' && (!t.receiver?.track || t.receiver.track.muted)) {
+                if (t.mid === null || t.receiver.track?.kind === 'video') freeVideo++;
+                else freeAudio++;
+            }
+        }
+        // Add more if needed (rough estimate: half video, half audio)
+        const halfNeeded = Math.ceil(needed / 2);
+        const videoToAdd = Math.max(0, halfNeeded - freeVideo);
+        const audioToAdd = Math.max(0, halfNeeded - freeAudio);
+        for (let i = 0; i < videoToAdd; i++) this.pc.addTransceiver('video', { direction: 'recvonly' });
+        for (let i = 0; i < audioToAdd; i++) this.pc.addTransceiver('audio', { direction: 'recvonly' });
+        if (videoToAdd + audioToAdd > 0) {
+            this.log(`Added ${videoToAdd}v+${audioToAdd}a transceivers`, 'wn');
+        }
     }
 
     _onDominantSpeaker(d) {
@@ -391,27 +459,16 @@ class SFU {
             rtcpMuxPolicy: 'require'
         });
 
-        // Add local video with simulcast encodings
+        // Add local tracks — NO simulcast sendEncodings (Pion v3 can't match m/l SSRCs)
         const videoTrack = this.localStream.getVideoTracks()[0];
         const audioTrack = this.localStream.getAudioTracks()[0];
 
-        if (videoTrack) {
-            this.pc.addTransceiver(videoTrack, {
-                direction: 'sendrecv',
-                sendEncodings: [
-                    { rid: 'h', maxBitrate: 1500000 },
-                    { rid: 'm', maxBitrate: 500000, scaleResolutionDownBy: 2 },
-                    { rid: 'l', maxBitrate: 150000, scaleResolutionDownBy: 4 }
-                ]
-            });
-        }
-        if (audioTrack) {
-            this.pc.addTrack(audioTrack, this.localStream);
-        }
+        if (videoTrack) this.pc.addTrack(videoTrack, this.localStream);
+        if (audioTrack) this.pc.addTrack(audioTrack, this.localStream);
 
-        // Pre-allocate recvonly transceivers
-        for (let i = 0; i < 3; i++) this.pc.addTransceiver('video', { direction: 'recvonly' });
-        for (let i = 0; i < 3; i++) this.pc.addTransceiver('audio', { direction: 'recvonly' });
+        // Pre-allocate recvonly transceivers (10+10 to support many peers)
+        for (let i = 0; i < 10; i++) this.pc.addTransceiver('video', { direction: 'recvonly' });
+        for (let i = 0; i < 10; i++) this.pc.addTransceiver('audio', { direction: 'recvonly' });
 
         this.pc.ontrack = (ev) => {
             this.trackCount++;
@@ -464,10 +521,14 @@ class SFU {
         this.pc.onconnectionstatechange = () => {
             this.ui();
             const s = this.pc?.connectionState;
-            this.log('Connection: ' + s, s === 'connected' ? 'ok' : '');
+            this.log('Connection: ' + s, s === 'connected' ? 'ok' : (s === 'failed' ? 'er' : ''));
             if (s === 'connected' && this._negPend) {
                 this._negPend = false;
                 this._negotiate();
+            }
+            if (s === 'failed') {
+                this.log('WebRTC failed, will reconnect via WS', 'er');
+                this.ws?.close();
             }
         };
 

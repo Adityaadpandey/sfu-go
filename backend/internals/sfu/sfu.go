@@ -755,9 +755,21 @@ func (s *SFU) handleServerICECandidate(p *peer.Peer, candidate *webrtc.ICECandid
 func (s *SFU) handleRenegotiationNeeded(targetPeer *peer.Peer, reason string) {
 	roomClients := s.signalingHub.GetClientsByRoom(targetPeer.RoomID)
 
+	// Count how many tracks the server has added to this peer so the client
+	// can ensure enough recvonly transceivers before creating an offer.
+	trackCount := 0
+	if targetPeer.Connection != nil {
+		for _, sender := range targetPeer.Connection.GetSenders() {
+			if sender.Track() != nil {
+				trackCount++
+			}
+		}
+	}
+
 	data, err := json.Marshal(map[string]interface{}{
-		"reason": reason,
-		"peerId": targetPeer.ID,
+		"reason":     reason,
+		"peerId":     targetPeer.ID,
+		"trackCount": trackCount,
 	})
 	if err != nil {
 		return
