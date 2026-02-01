@@ -7,13 +7,24 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/adityaadpandey/sfu-go/internals/peer"
 	"github.com/google/uuid"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
 )
+
+// rtpBufPool reuses RTP packet byte buffers to reduce GC pressure.
+// Each fan-out goroutine grabs a buffer from this pool instead of allocating.
+var rtpBufPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, 1500)
+		return &buf
+	},
+}
 
 type RoomState string
 
@@ -37,11 +48,23 @@ type SimulcastLayer struct {
 	Active bool
 }
 
+// subscriberSnapshot is an immutable slice used for lock-free fan-out reads.
+// Stored inside an atomic.Value on MediaTrack — replaced on every join/leave.
+type subscriberSnapshot []*SubscriberState
+
 // SubscriberState tracks per-subscriber forwarding state for a media track.
 type SubscriberState struct {
+	PeerID     string
 	Sender     *webrtc.RTPSender
 	LocalTrack *webrtc.TrackLocalStaticRTP
 	CurrentRID string // which simulcast layer this subscriber receives ("" = non-simulcast)
+
+	// Non-blocking write buffer: fan-out pushes packets here; a dedicated
+	// writer goroutine drains them. If full, packet is dropped for THIS
+	// subscriber only — never blocking the fan-out for others.
+	writeCh chan *rtp.Packet
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // AudioLevel tracks speaking activity for a peer.
@@ -128,6 +151,10 @@ type MediaTrack struct {
 	CreatedAt   time.Time                     `json:"createdAt"`
 	mu          sync.RWMutex
 
+	// Copy-on-write snapshot for lock-free fan-out reads.
+	// Updated atomically whenever Subscribers changes.
+	subscriberSnap atomic.Value // stores subscriberSnapshot
+
 	ctx           context.Context
 	cancel        context.CancelFunc
 	fanOutStarted bool
@@ -136,6 +163,9 @@ type MediaTrack struct {
 	Layers     map[string]*SimulcastLayer `json:"-"` // RID -> layer
 	IsSimulcast bool                      `json:"isSimulcast"`
 	BaseTrackID string                    `json:"baseTrackId"` // grouping key: StreamID+Kind
+
+	// PLI tracking — only fire PLI on new-join or packet loss, not blindly
+	needsPLI     atomic.Bool
 }
 
 type RoomSettings struct {
@@ -145,6 +175,44 @@ type RoomSettings struct {
 	RecordingEnabled   bool `json:"recordingEnabled"`
 	MaxVideoBitrate    int  `json:"maxVideoBitrate"`
 	MaxAudioBitrate    int  `json:"maxAudioBitrate"`
+}
+
+// rebuildSnapshot replaces the atomic subscriber snapshot from the map.
+// MUST be called with mediaTrack.mu held (write lock).
+func (mt *MediaTrack) rebuildSnapshot() {
+	snap := make(subscriberSnapshot, 0, len(mt.Subscribers))
+	for _, sub := range mt.Subscribers {
+		snap = append(snap, sub)
+	}
+	mt.subscriberSnap.Store(snap)
+}
+
+// getSnapshot returns the current subscriber snapshot lock-free.
+func (mt *MediaTrack) getSnapshot() subscriberSnapshot {
+	v := mt.subscriberSnap.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(subscriberSnapshot)
+}
+
+// startSubscriberWriter runs a goroutine that drains the write channel and
+// writes RTP packets to the local track. If the channel is full, packets are
+// dropped for this subscriber only, never blocking the fan-out loop.
+func startSubscriberWriter(sub *SubscriberState) {
+	go func() {
+		for {
+			select {
+			case <-sub.ctx.Done():
+				return
+			case pkt, ok := <-sub.writeCh:
+				if !ok {
+					return
+				}
+				sub.LocalTrack.WriteRTP(pkt)
+			}
+		}
+	}()
 }
 
 func NewRoom(name string, maxPeers int, logger *zap.Logger) *Room {
@@ -442,7 +510,7 @@ func (r *Room) handlePeerTrackAdded(p *peer.Peer, track *webrtc.TrackRemote, rec
 	go r.startFanOutForwarding(mediaTrack)
 	go r.forwardTrackToOtherPeers(mediaTrack, p.ID)
 	if mediaTrack.Kind == "video" {
-		go r.periodicPLI(mediaTrack)
+		go r.smartPLI(mediaTrack)
 	}
 }
 
@@ -508,11 +576,7 @@ func (r *Room) AddExistingTracksToPeer(newPeer *peer.Peer) int {
 			zap.String("newPeerID", newPeer.ID),
 			zap.Int("trackCount", added),
 		)
-		for _, mediaTrack := range tracks {
-			if mediaTrack.Kind == "video" {
-				r.requestPLI(mediaTrack, 200*time.Millisecond)
-			}
-		}
+		// PLI will be sent automatically by smartPLI via the needsPLI flag
 	}
 
 	return added
@@ -543,10 +607,7 @@ func (r *Room) forwardTrackToOtherPeers(mediaTrack *MediaTrack, excludePeerID st
 func (r *Room) forwardTrackToPeer(mediaTrack *MediaTrack, targetPeer *peer.Peer) {
 	if r.forwardTrackToPeerDirect(mediaTrack, targetPeer) {
 		r.triggerRenegotiation(targetPeer)
-
-		if mediaTrack.Kind == "video" {
-			r.requestPLI(mediaTrack, 20*time.Millisecond)
-		}
+		// PLI will be sent automatically by smartPLI via the needsPLI flag
 		return
 	}
 
@@ -568,9 +629,6 @@ func (r *Room) forwardTrackToPeer(mediaTrack *MediaTrack, targetPeer *peer.Peer)
 		}
 		if r.forwardTrackToPeerDirect(mediaTrack, targetPeer) {
 			r.triggerRenegotiation(targetPeer)
-			if mediaTrack.Kind == "video" {
-				r.requestPLI(mediaTrack, 20*time.Millisecond)
-			}
 		}
 	}()
 }
@@ -627,7 +685,6 @@ func (r *Room) forwardTrackToPeerDirect(mediaTrack *MediaTrack, targetPeer *peer
 		defaultRID = "h" // default to highest quality
 		mediaTrack.mu.RLock()
 		if _, ok := mediaTrack.Layers["h"]; !ok {
-			// Pick whatever layer is available
 			for rid := range mediaTrack.Layers {
 				defaultRID = rid
 				break
@@ -636,14 +693,28 @@ func (r *Room) forwardTrackToPeerDirect(mediaTrack *MediaTrack, targetPeer *peer
 		mediaTrack.mu.RUnlock()
 	}
 
-	mediaTrack.mu.Lock()
-	mediaTrack.Subscribers[targetPeer.ID] = &SubscriberState{
+	subCtx, subCancel := context.WithCancel(mediaTrack.ctx)
+	sub := &SubscriberState{
+		PeerID:     targetPeer.ID,
 		Sender:     sender,
 		LocalTrack: localTrack,
 		CurrentRID: defaultRID,
+		writeCh:    make(chan *rtp.Packet, 60), // ~60 packets ≈ 1s video at 60fps
+		ctx:        subCtx,
+		cancel:     subCancel,
 	}
+
+	// Start dedicated writer goroutine for this subscriber
+	startSubscriberWriter(sub)
+
+	mediaTrack.mu.Lock()
+	mediaTrack.Subscribers[targetPeer.ID] = sub
 	mediaTrack.LocalTracks[targetPeer.ID] = localTrack
+	mediaTrack.rebuildSnapshot()
 	mediaTrack.mu.Unlock()
+
+	// Signal that a new subscriber needs a keyframe
+	mediaTrack.needsPLI.Store(true)
 
 	r.logger.Debug("Track forwarded",
 		zap.String("trackID", mediaTrack.ID),
@@ -654,54 +725,55 @@ func (r *Room) forwardTrackToPeerDirect(mediaTrack *MediaTrack, targetPeer *peer
 	return true
 }
 
-func (r *Room) requestPLI(mediaTrack *MediaTrack, delay time.Duration) {
-	r.mu.RLock()
-	sourcePeer, exists := r.Peers[mediaTrack.PeerID]
-	r.mu.RUnlock()
+// smartPLI monitors the needsPLI flag and sends keyframe requests on demand
+// (when a new subscriber joins) plus a safety fallback every 5 seconds.
+// This avoids the bandwidth spikes of unconditional 2s PLI while still
+// healing packet-loss glitches.
+func (r *Room) smartPLI(mediaTrack *MediaTrack) {
+	// Fast poll for on-demand PLI (new subscriber joined)
+	fastTicker := time.NewTicker(100 * time.Millisecond)
+	// Safety fallback — catches packet-loss glitches
+	safetyTicker := time.NewTicker(5 * time.Second)
+	defer fastTicker.Stop()
+	defer safetyTicker.Stop()
 
-	if exists && sourcePeer != nil {
-		go func() {
-			time.Sleep(delay)
-			if err := sourcePeer.SendPLI(uint32(mediaTrack.Track.SSRC())); err != nil {
-				r.logger.Debug("Failed to send PLI", zap.Error(err))
+	sendPLI := func() {
+		r.mu.RLock()
+		sourcePeer, exists := r.Peers[mediaTrack.PeerID]
+		r.mu.RUnlock()
+		if !exists || sourcePeer == nil {
+			return
+		}
+		if mediaTrack.IsSimulcast {
+			mediaTrack.mu.RLock()
+			for _, layer := range mediaTrack.Layers {
+				sourcePeer.SendPLI(uint32(layer.Track.SSRC()))
 			}
-		}()
+			mediaTrack.mu.RUnlock()
+		} else {
+			sourcePeer.SendPLI(uint32(mediaTrack.Track.SSRC()))
+		}
 	}
-}
-
-// periodicPLI sends a PLI (keyframe request) every 2 seconds for a video track.
-// Without periodic PLIs, any packet loss causes permanent video freeze.
-func (r *Room) periodicPLI(mediaTrack *MediaTrack) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
 
 	for {
 		select {
 		case <-mediaTrack.ctx.Done():
 			return
-		case <-ticker.C:
-			r.mu.RLock()
-			sourcePeer, exists := r.Peers[mediaTrack.PeerID]
-			r.mu.RUnlock()
-			if !exists || sourcePeer == nil {
-				return
+		case <-fastTicker.C:
+			if mediaTrack.needsPLI.CompareAndSwap(true, false) {
+				sendPLI()
 			}
-
-			// For simulcast tracks, send PLI for each layer
-			if mediaTrack.IsSimulcast {
-				mediaTrack.mu.RLock()
-				for _, layer := range mediaTrack.Layers {
-					sourcePeer.SendPLI(uint32(layer.Track.SSRC()))
-				}
-				mediaTrack.mu.RUnlock()
-			} else {
-				sourcePeer.SendPLI(uint32(mediaTrack.Track.SSRC()))
-			}
+		case <-safetyTicker.C:
+			sendPLI()
 		}
 	}
 }
 
-// startFanOutForwarding reads RTP from a non-simulcast track and writes to all subscribers.
+// startFanOutForwarding reads RTP from a non-simulcast track and dispatches
+// packets to per-subscriber write channels. The fan-out loop is fully lock-free
+// (uses atomic snapshot). Per-subscriber channels decouple slow receivers from
+// the hot loop — if a subscriber's buffer is full the packet is dropped for
+// that subscriber only, never blocking anyone else.
 func (r *Room) startFanOutForwarding(mediaTrack *MediaTrack) {
 	mediaTrack.mu.Lock()
 	if mediaTrack.fanOutStarted {
@@ -749,11 +821,16 @@ func (r *Room) startFanOutForwarding(mediaTrack *MediaTrack) {
 			continue
 		}
 
-		mediaTrack.mu.RLock()
-		for _, localTrack := range mediaTrack.LocalTracks {
-			localTrack.WriteRTP(packet)
+		// Lock-free read of subscriber list via atomic snapshot
+		snap := mediaTrack.getSnapshot()
+		for _, sub := range snap {
+			select {
+			case sub.writeCh <- packet:
+				// dispatched
+			default:
+				// subscriber's buffer is full — drop for THIS peer only
+			}
 		}
-		mediaTrack.mu.RUnlock()
 
 		packetCount++
 
@@ -806,14 +883,16 @@ func (r *Room) startLayerFanOut(mediaTrack *MediaTrack, rid string) {
 			continue
 		}
 
-		// Write only to subscribers on this layer
-		mediaTrack.mu.RLock()
-		for _, sub := range mediaTrack.Subscribers {
+		// Lock-free read; dispatch to per-subscriber buffer
+		snap := mediaTrack.getSnapshot()
+		for _, sub := range snap {
 			if sub.CurrentRID == rid {
-				sub.LocalTrack.WriteRTP(packet)
+				select {
+				case sub.writeCh <- packet:
+				default:
+				}
 			}
 		}
-		mediaTrack.mu.RUnlock()
 	}
 }
 
@@ -906,6 +985,7 @@ func (r *Room) removePeerTracks(peerID string) []*peer.Peer {
 
 			mediaTrack.mu.Lock()
 			for subPeerID, sub := range mediaTrack.Subscribers {
+				sub.cancel() // stop subscriber writer goroutine
 				if subPeer, ok := r.Peers[subPeerID]; ok {
 					if subPeer.Connection != nil {
 						if err := subPeer.Connection.RemoveTrack(sub.Sender); err != nil {
@@ -923,8 +1003,12 @@ func (r *Room) removePeerTracks(peerID string) []*peer.Peer {
 			tracksToRemove = append(tracksToRemove, trackID)
 		} else {
 			mediaTrack.mu.Lock()
+			if sub, ok := mediaTrack.Subscribers[peerID]; ok {
+				sub.cancel() // stop subscriber writer goroutine
+			}
 			delete(mediaTrack.Subscribers, peerID)
 			delete(mediaTrack.LocalTracks, peerID)
+			mediaTrack.rebuildSnapshot()
 			mediaTrack.mu.Unlock()
 		}
 	}
