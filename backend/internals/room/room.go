@@ -17,13 +17,35 @@ import (
 	"go.uber.org/zap"
 )
 
-// rtpBufPool reuses RTP packet byte buffers to reduce GC pressure.
-// Each fan-out goroutine grabs a buffer from this pool instead of allocating.
-var rtpBufPool = sync.Pool{
+// packetPool reuses RTP packet objects to reduce GC pressure.
+// We clone packets before dispatching to subscribers because Pion may reuse
+// the underlying buffer on the next ReadRTP() call.
+var packetPool = sync.Pool{
 	New: func() interface{} {
-		buf := make([]byte, 1500)
-		return &buf
+		return &rtp.Packet{}
 	},
+}
+
+// clonePacket creates a deep copy of an RTP packet using pooled objects.
+// The caller is responsible for returning the packet to the pool after use.
+func clonePacket(src *rtp.Packet) *rtp.Packet {
+	dst := packetPool.Get().(*rtp.Packet)
+	// Copy header fields
+	dst.Header = src.Header
+	// Deep copy payload to avoid data races
+	if cap(dst.Payload) < len(src.Payload) {
+		dst.Payload = make([]byte, len(src.Payload))
+	} else {
+		dst.Payload = dst.Payload[:len(src.Payload)]
+	}
+	copy(dst.Payload, src.Payload)
+	return dst
+}
+
+// returnPacket returns a packet to the pool for reuse.
+func returnPacket(pkt *rtp.Packet) {
+	pkt.Payload = pkt.Payload[:0] // Reset but keep capacity
+	packetPool.Put(pkt)
 }
 
 type RoomState string
@@ -197,8 +219,9 @@ func (mt *MediaTrack) getSnapshot() subscriberSnapshot {
 }
 
 // startSubscriberWriter runs a goroutine that drains the write channel and
-// writes RTP packets to the local track. If the channel is full, packets are
-// dropped for this subscriber only, never blocking the fan-out loop.
+// writes RTP packets to the local track. After writing, packets are returned
+// to the pool for reuse. If the channel is full, packets are dropped for this
+// subscriber only, never blocking the fan-out loop.
 func startSubscriberWriter(sub *SubscriberState) {
 	go func() {
 		for {
@@ -210,6 +233,7 @@ func startSubscriberWriter(sub *SubscriberState) {
 					return
 				}
 				sub.LocalTrack.WriteRTP(pkt)
+				returnPacket(pkt) // Return cloned packet to pool
 			}
 		}
 	}()
@@ -822,13 +846,16 @@ func (r *Room) startFanOutForwarding(mediaTrack *MediaTrack) {
 		}
 
 		// Lock-free read of subscriber list via atomic snapshot
+		// Clone each packet before dispatching to prevent data races
 		snap := mediaTrack.getSnapshot()
 		for _, sub := range snap {
+			clone := clonePacket(packet)
 			select {
-			case sub.writeCh <- packet:
-				// dispatched
+			case sub.writeCh <- clone:
+				// dispatched — subscriber writer will return to pool
 			default:
 				// subscriber's buffer is full — drop for THIS peer only
+				returnPacket(clone) // Return unused clone to pool
 			}
 		}
 
@@ -883,13 +910,17 @@ func (r *Room) startLayerFanOut(mediaTrack *MediaTrack, rid string) {
 			continue
 		}
 
-		// Lock-free read; dispatch to per-subscriber buffer
+		// Lock-free read; clone and dispatch to per-subscriber buffer
 		snap := mediaTrack.getSnapshot()
 		for _, sub := range snap {
 			if sub.CurrentRID == rid {
+				clone := clonePacket(packet)
 				select {
-				case sub.writeCh <- packet:
+				case sub.writeCh <- clone:
+					// dispatched — subscriber writer will return to pool
 				default:
+					// buffer full — drop for this subscriber only
+					returnPacket(clone)
 				}
 			}
 		}
