@@ -145,7 +145,7 @@ func LoadConfig() *Config {
 			SimulcastEnabled:         getEnvBool("SFU_SIMULCAST_ENABLED", false),
 			SpeakerDetectionInterval: time.Duration(getEnvInt("SFU_SPEAKER_DETECTION_INTERVAL_MS", 200)) * time.Millisecond,
 			StatsInterval:            time.Duration(getEnvInt("SFU_STATS_INTERVAL_MS", 3000)) * time.Millisecond,
-			SessionTTL:               time.Duration(getEnvInt("SFU_SESSION_TTL_SEC", 30)) * time.Second,
+			SessionTTL:               time.Duration(getEnvInt("SFU_SESSION_TTL_SEC", 120)) * time.Second, // 2 minutes for reconnection
 			AutoSubscribe:            getEnvBool("SFU_AUTO_SUBSCRIBE", true),
 		},
 	}

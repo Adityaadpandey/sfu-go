@@ -36,4 +36,4 @@ export type SignalingMessage =
   | { type: "layer-switch"; data: { trackId: string; targetRid: string } }
   | { type: "layer-available"; data: { trackId: string; layers: string[] } };
 
-export type RoomStatus = "idle" | "connecting" | "connected" | "error" | "disconnected";
+export type RoomStatus = "idle" | "connecting" | "connected" | "reconnecting" | "error" | "disconnected";

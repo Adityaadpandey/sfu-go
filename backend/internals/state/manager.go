@@ -303,6 +303,11 @@ func (m *Manager) Ping() error {
 	return m.redis.Ping(m.ctx).Err()
 }
 
+// GetRedisClient returns the underlying Redis client for pub/sub operations
+func (m *Manager) GetRedisClient() *redis.Client {
+	return m.redis
+}
+
 // Close cleans up resources
 func (m *Manager) Close() error {
 	m.cancel()

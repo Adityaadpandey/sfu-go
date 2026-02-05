@@ -52,7 +52,7 @@ export const useWebRTC = () => {
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const disconnectRequestedRef = useRef(false);
-  const maxReconnectAttempts = 10;
+  const maxReconnectAttempts = 20; // Increased for better resilience
 
   // Negotiation state
   const negRef = useRef(false); // _neg
@@ -83,7 +83,9 @@ export const useWebRTC = () => {
   );
 
   // --- Helper Functions (declared first to avoid hoisting issues) ---
-  const cleanup = useCallback(() => {
+
+  // cleanupForReconnect: preserves local media for seamless reconnection
+  const cleanupForReconnect = useCallback(() => {
     if (statsIntervalRef.current) {
       clearInterval(statsIntervalRef.current);
       statsIntervalRef.current = null;
@@ -97,6 +99,22 @@ export const useWebRTC = () => {
       pcRef.current.close();
       pcRef.current = null;
     }
+    // DO NOT stop local media tracks - keep them for reconnection
+    // localStreamRef and screenStreamRef are preserved
+
+    negRef.current = false;
+    negPendRef.current = false;
+    negReadyRef.current = false;
+    iceBufRef.current = [];
+    peerIdRef.current = '';
+    makingOfferRef.current = false;
+    // Keep sessionIdRef and sessionTokenRef for reconnection
+  }, []);
+
+  // Full cleanup: stops all media (used on explicit disconnect)
+  const cleanup = useCallback(() => {
+    cleanupForReconnect();
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
@@ -110,20 +128,12 @@ export const useWebRTC = () => {
       cameraTrackBeforeScreenRef.current = null;
     }
 
-    negRef.current = false;
-    negPendRef.current = false;
-    negReadyRef.current = false;
-    iceBufRef.current = [];
-    peerIdRef.current = '';
-    makingOfferRef.current = false;
-    // Keep sessionIdRef and sessionTokenRef for reconnection
-
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
     reconnectAttemptsRef.current = 0;
-  }, []);
+  }, [cleanupForReconnect]);
 
   const sendSignalingMessage = useCallback(
     (msg: SignalingMessage | { type: string; data?: unknown }) => {
@@ -145,34 +155,36 @@ export const useWebRTC = () => {
   const ensureRecvonlyTransceivers = useCallback(
     (neededTracks: number) => {
       // Server may ask us to renegotiate with a trackCount hint.
-      // Ensure we have enough free recvonly transceivers to receive all streams.
+      // Ensure we have enough TOTAL recvonly transceivers (not just free ones)
+      // to receive all streams. This is critical for scaling beyond the initial pool.
       if (!pcRef.current) return;
       const pc = pcRef.current;
 
       const transceivers = pc.getTransceivers();
-      let freeVideo = 0;
-      let freeAudio = 0;
+      let totalVideo = 0;
+      let totalAudio = 0;
 
+      // Count ALL recvonly transceivers, not just free ones
       for (const t of transceivers) {
-        if (t.direction !== 'recvonly') continue;
-        const tr = t.receiver?.track;
-        const kind = tr?.kind;
-        const free = !tr || tr.readyState === 'ended';
-        if (!free) continue;
-        if (kind === 'audio') freeAudio++;
-        else if (kind === 'video') freeVideo++;
-        else freeVideo++; // default
+        if (t.direction === 'recvonly' || t.direction === 'sendrecv') {
+          const kind = t.receiver?.track?.kind;
+          if (kind === 'audio') totalAudio++;
+          else if (kind === 'video') totalVideo++;
+          else totalVideo++; // default to video if unknown
+        }
       }
 
+      // Each peer typically sends 1 video + 1 audio track
+      // neededTracks represents total tracks expected
       const halfNeeded = Math.ceil(neededTracks / 2);
-      const videoToAdd = Math.max(0, halfNeeded - freeVideo);
-      const audioToAdd = Math.max(0, halfNeeded - freeAudio);
+      const videoToAdd = Math.max(0, halfNeeded - totalVideo);
+      const audioToAdd = Math.max(0, halfNeeded - totalAudio);
 
       for (let i = 0; i < videoToAdd; i++) pc.addTransceiver('video', { direction: 'recvonly' });
       for (let i = 0; i < audioToAdd; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
 
       if (videoToAdd + audioToAdd > 0) {
-        log(`Added ${videoToAdd}v+${audioToAdd}a transceivers`, 'warning');
+        log(`Dynamically added ${videoToAdd}v+${audioToAdd}a transceivers (total needed: ${neededTracks})`, 'info');
       }
     },
     [log]
@@ -365,9 +377,10 @@ export const useWebRTC = () => {
       if (audioTrack) pc.addTrack(audioTrack, stream);
 
       // Pre-allocate recvonly transceivers for potential remote peers
-      // Reference uses 10+10 to support many peers
-      for (let i = 0; i < 10; i++) pc.addTransceiver('video', { direction: 'recvonly' });
-      for (let i = 0; i < 10; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
+      // Allocate 50+50 to support up to ~50 remote peers (each sends video + audio)
+      // This is critical - insufficient transceivers causes peer disconnections!
+      for (let i = 0; i < 50; i++) pc.addTransceiver('video', { direction: 'recvonly' });
+      for (let i = 0; i < 50; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
     } catch (err) {
       log('Media error: ' + err, 'error');
       setStatus('error');
@@ -396,8 +409,7 @@ export const useWebRTC = () => {
       const sourcePeerId = stream.id;
 
       log(
-        `ontrack: kind=${event.track.kind} streams=${
-          event.streams.length
+        `ontrack: kind=${event.track.kind} streams=${event.streams.length
         } id=${event.track.id.slice(0, 8)}`,
         'info'
       );
@@ -828,28 +840,33 @@ export const useWebRTC = () => {
 
       ws.onclose = (event) => {
         log(`WebSocket closed (${event.code})`, 'warning');
-        setStatus('disconnected');
 
         // Keep store state; allow reconnect attempts unless user explicitly disconnected.
-        cleanup();
-
         if (!disconnectRequestedRef.current && connectionInfo.current.roomId) {
+          // Use reconnecting status and preserve local media
+          setStatus('reconnecting');
+          cleanupForReconnect();
+
           if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-            log('Max reconnect attempts reached', 'error');
+            log('Max reconnect attempts reached, giving up', 'error');
+            setStatus('disconnected');
+            cleanup(); // Full cleanup after giving up
             return;
           }
           reconnectAttemptsRef.current += 1;
-          const delay = Math.min(1000 * Math.pow(1.5, reconnectAttemptsRef.current - 1), 15000);
+          const delay = Math.min(1000 * Math.pow(1.5, reconnectAttemptsRef.current - 1), 30000);
           log(
-            `Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${
-              reconnectAttemptsRef.current
-            })...`,
+            `Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${reconnectAttemptsRef.current
+            }/${maxReconnectAttempts})...`,
             'warning'
           );
           reconnectTimerRef.current = window.setTimeout(() => {
             const info = connectionInfo.current;
             connect(info.roomId, info.userId, info.name);
           }, delay);
+        } else {
+          setStatus('disconnected');
+          cleanup();
         }
       };
 
@@ -858,7 +875,7 @@ export const useWebRTC = () => {
         setStatus('error');
       };
     },
-    [setStatus, setRoomInfo, log, sendSignalingMessage, handleSignalingMessage, cleanup]
+    [setStatus, setRoomInfo, log, sendSignalingMessage, handleSignalingMessage, cleanup, cleanupForReconnect]
   );
 
   // --- React to device/settings changes (swap tracks without full reconnect) ---

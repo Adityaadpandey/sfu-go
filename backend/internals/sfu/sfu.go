@@ -40,6 +40,7 @@ type SFU struct {
 	roomsMu sync.RWMutex
 
 	signalingHub *signaling.Hub
+	pubsubManager *signaling.PubSubManager // Redis pub/sub for horizontal scaling
 	httpServer   *http.Server
 
 	metrics *Metrics
@@ -114,6 +115,15 @@ func NewSFU(cfg *config.Config) (*SFU, error) {
 		rateLimiters:    make(map[string]*rate.Limiter),
 		ctx:             ctx,
 		cancel:          cancel,
+	}
+
+	// Initialize pub/sub manager for horizontal scaling
+	if stateManager != nil {
+		sfu.pubsubManager = signaling.NewPubSubManager(
+			stateManager.GetRedisClient(),
+			sfu.signalingHub,
+			logger,
+		)
 	}
 
 	sfu.setupWebRTCConfig()
@@ -1043,7 +1053,43 @@ func (s *SFU) deleteRoom(w http.ResponseWriter, roomID string) {
 
 func (s *SFU) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "healthy", "timestamp": time.Now()})
+
+	// Count active peers
+	s.roomsMu.RLock()
+	roomCount := len(s.rooms)
+	peerCount := 0
+	for _, rm := range s.rooms {
+		peerCount += len(rm.GetAllPeers())
+	}
+	s.roomsMu.RUnlock()
+
+	// Check Redis health
+	redisStatus := "connected"
+	if s.stateManager == nil {
+		redisStatus = "disabled"
+	} else if err := s.stateManager.Ping(); err != nil {
+		redisStatus = "error: " + err.Error()
+	}
+
+	// Get instance ID
+	instanceID := ""
+	if s.pubsubManager != nil {
+		instanceID = s.pubsubManager.GetInstanceID()
+	}
+
+	status := "healthy"
+	if redisStatus != "connected" && redisStatus != "disabled" {
+		status = "degraded"
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     status,
+		"timestamp":  time.Now(),
+		"instanceId": instanceID,
+		"redis":      redisStatus,
+		"rooms":      roomCount,
+		"peers":      peerCount,
+	})
 }
 
 // --- WebSocket ---
