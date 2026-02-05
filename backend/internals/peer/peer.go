@@ -52,6 +52,12 @@ type Peer struct {
 	// Synchronization
 	mu              sync.RWMutex
 	disconnectedOnce sync.Once
+
+	// Perfect negotiation state (server is impolite)
+	makingOffer     bool
+	ignoreOffer     bool
+	isSettingRemote bool
+
 	logger          *zap.Logger
 
 	// Callbacks
@@ -368,6 +374,91 @@ func (p *Peer) SetRemoteDescription(desc webrtc.SessionDescription) error {
 	}
 
 	return nil
+}
+
+// --- Perfect Negotiation (Server = Impolite) ---
+
+// ShouldIgnoreOffer returns true if we should ignore incoming offer (we're mid-negotiation)
+func (p *Peer) ShouldIgnoreOffer() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.makingOffer || p.isSettingRemote
+}
+
+// SetMakingOffer marks that we're in the process of creating an offer
+func (p *Peer) SetMakingOffer(v bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.makingOffer = v
+}
+
+// SetSettingRemote marks that we're in the process of setting remote description
+func (p *Peer) SetSettingRemote(v bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.isSettingRemote = v
+}
+
+// CreateOfferWithNegotiation creates offer with perfect negotiation state tracking
+func (p *Peer) CreateOfferWithNegotiation() (*webrtc.SessionDescription, error) {
+	p.SetMakingOffer(true)
+	defer p.SetMakingOffer(false)
+
+	p.mu.RLock()
+	pc := p.Connection
+	p.mu.RUnlock()
+
+	if pc == nil {
+		return nil, fmt.Errorf("peer connection not initialized")
+	}
+
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := pc.SetLocalDescription(offer); err != nil {
+		return nil, err
+	}
+
+	return &offer, nil
+}
+
+// SetRemoteDescriptionWithNegotiation sets remote description with perfect negotiation
+func (p *Peer) SetRemoteDescriptionWithNegotiation(desc webrtc.SessionDescription) error {
+	p.SetSettingRemote(true)
+	defer p.SetSettingRemote(false)
+
+	return p.SetRemoteDescription(desc)
+}
+
+// RequestICERestart creates a new offer with ICE restart flag
+func (p *Peer) RequestICERestart() (*webrtc.SessionDescription, error) {
+	p.mu.RLock()
+	pc := p.Connection
+	p.mu.RUnlock()
+
+	if pc == nil {
+		return nil, fmt.Errorf("peer connection not initialized")
+	}
+
+	p.SetMakingOffer(true)
+	defer p.SetMakingOffer(false)
+
+	offer, err := pc.CreateOffer(&webrtc.OfferOptions{
+		ICERestart: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := pc.SetLocalDescription(offer); err != nil {
+		return nil, err
+	}
+
+	p.logger.Info("ICE restart initiated", zap.String("peerID", p.ID))
+
+	return &offer, nil
 }
 
 func (p *Peer) Close() error {

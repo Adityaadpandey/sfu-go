@@ -33,6 +33,12 @@ const (
 	MessageTypeLayerAvailable   MessageType = "layer-available"
 	MessageTypeDominantSpeaker  MessageType = "dominant-speaker"
 	MessageTypeQualityStats     MessageType = "quality-stats"
+	MessageTypeICERestartRequest MessageType = "ice-restart-request"
+	MessageTypeICERestartOffer   MessageType = "ice-restart-offer"
+	MessageTypeTrackPublished   MessageType = "track-published"
+	MessageTypeSubscribe        MessageType = "subscribe"
+	MessageTypeUnsubscribe      MessageType = "unsubscribe"
+	MessageTypeSubscriptionAck  MessageType = "subscription-ack"
 )
 
 type Message struct {
