@@ -146,29 +146,41 @@ export const useWebRTC = () => {
         const pc = pcRef.current;
 
         const transceivers = pc.getTransceivers();
-        let freeVideo = 0;
-        let freeAudio = 0;
+        let usedVideo = 0, usedAudio = 0;
+        let totalVideo = 0, totalAudio = 0;
 
         for (const t of transceivers) {
             if (t.direction !== "recvonly") continue;
-            const tr = t.receiver?.track;
-            const kind = tr?.kind;
-            const free = !tr || tr.readyState === "ended";
-            if (!free) continue;
-            if (kind === "audio") freeAudio++;
-            else if (kind === "video") freeVideo++;
-            else freeVideo++; // default
+            // Determine kind from the transceiver's receiver track or mid
+            const kind = t.receiver?.track?.kind || (t.mid?.includes("video") ? "video" : "audio");
+
+            if (kind === "video") {
+                totalVideo++;
+                if (t.receiver?.track && t.receiver.track.readyState === "live") {
+                    usedVideo++;
+                }
+            } else {
+                totalAudio++;
+                if (t.receiver?.track && t.receiver.track.readyState === "live") {
+                    usedAudio++;
+                }
+            }
         }
 
+        const freeVideo = totalVideo - usedVideo;
+        const freeAudio = totalAudio - usedAudio;
+
+        // For N tracks, assume ~50% video, ~50% audio
         const halfNeeded = Math.ceil(neededTracks / 2);
-        const videoToAdd = Math.max(0, halfNeeded - freeVideo);
-        const audioToAdd = Math.max(0, halfNeeded - freeAudio);
+        // Add buffer of 5 extra for incoming peers
+        const videoToAdd = Math.max(0, (halfNeeded + 5) - freeVideo);
+        const audioToAdd = Math.max(0, (halfNeeded + 5) - freeAudio);
 
         for (let i = 0; i < videoToAdd; i++) pc.addTransceiver("video", { direction: "recvonly" });
         for (let i = 0; i < audioToAdd; i++) pc.addTransceiver("audio", { direction: "recvonly" });
 
         if (videoToAdd + audioToAdd > 0) {
-            log(`Added ${videoToAdd}v+${audioToAdd}a transceivers`, "warning");
+            log(`Transceivers: +${videoToAdd}v +${audioToAdd}a (free: ${freeVideo}v/${freeAudio}a, needed: ${neededTracks})`, "info");
         }
     }, [log]);
 
@@ -352,9 +364,9 @@ export const useWebRTC = () => {
             if (audioTrack) pc.addTrack(audioTrack, stream);
 
             // Pre-allocate recvonly transceivers for potential remote peers
-            // Need 20+20 to support up to ~20 peers (each peer sends audio + video)
-            for (let i = 0; i < 20; i++) pc.addTransceiver('video', { direction: 'recvonly' });
-            for (let i = 0; i < 20; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
+            // Start with 25+25 for ~25 peers, dynamic allocation handles growth to 50+
+            for (let i = 0; i < 25; i++) pc.addTransceiver('video', { direction: 'recvonly' });
+            for (let i = 0; i < 25; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
 
         } catch (err) {
             log("Media error: " + err, "error");
