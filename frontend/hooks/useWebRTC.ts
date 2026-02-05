@@ -276,6 +276,12 @@ export const useWebRTC = () => {
     const negotiate = useCallback(async () => {
         if (!pcRef.current) return;
 
+        // Prevent concurrent negotiations
+        if (negRef.current) {
+            negPendRef.current = true;
+            return;
+        }
+
         // Perfect negotiation: track that we're making an offer
         makingOfferRef.current = true;
         negRef.current = true;
