@@ -352,9 +352,9 @@ export const useWebRTC = () => {
             if (audioTrack) pc.addTrack(audioTrack, stream);
 
             // Pre-allocate recvonly transceivers for potential remote peers
-            // Reference uses 10+10 to support many peers
-            for (let i = 0; i < 10; i++) pc.addTransceiver('video', { direction: 'recvonly' });
-            for (let i = 0; i < 10; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
+            // Need 20+20 to support up to ~20 peers (each peer sends audio + video)
+            for (let i = 0; i < 20; i++) pc.addTransceiver('video', { direction: 'recvonly' });
+            for (let i = 0; i < 20; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
 
         } catch (err) {
             log("Media error: " + err, "error");
