@@ -50,7 +50,7 @@ output "prometheus_internal_endpoint" {
 
 output "deployment_commands" {
   description = "Commands to deploy Docker images to ECR"
-  value = <<-EOT
+  value       = <<-EOT
     # Login to ECR
     aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${aws_ecr_repository.sfu.repository_url}
     

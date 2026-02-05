@@ -69,7 +69,7 @@ resource "aws_ecs_task_definition" "prometheus" {
     {
       name  = "prometheus"
       image = "prom/prometheus:latest"
-      
+
       portMappings = [
         {
           containerPort = 9090
@@ -130,7 +130,7 @@ resource "aws_ecs_task_definition" "grafana" {
     {
       name  = "grafana"
       image = "grafana/grafana:latest"
-      
+
       portMappings = [
         {
           containerPort = 3000

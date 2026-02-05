@@ -90,7 +90,7 @@ resource "aws_ecs_task_definition" "sfu" {
     {
       name  = "sfu-server"
       image = "${aws_ecr_repository.sfu.repository_url}:latest"
-      
+
       portMappings = [
         {
           containerPort = 8080
@@ -149,7 +149,7 @@ resource "aws_ecs_task_definition" "frontend" {
     {
       name  = "frontend"
       image = "${aws_ecr_repository.frontend.repository_url}:latest"
-      
+
       portMappings = [
         {
           containerPort = 3000

@@ -1,6 +1,6 @@
 terraform {
   required_version = ">= 1.0"
-  
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -25,8 +25,8 @@ module "vpc" {
   private_subnets = var.private_subnets
   public_subnets  = var.public_subnets
 
-  enable_nat_gateway = true
-  enable_vpn_gateway = false
+  enable_nat_gateway   = true
+  enable_vpn_gateway   = false
   enable_dns_hostnames = true
   enable_dns_support   = true
 
@@ -91,12 +91,12 @@ module "alb" {
 
   target_groups = {
     frontend = {
-      name_prefix      = "fe-"
-      protocol         = "HTTP"
-      port             = 3000
-      target_type      = "ip"
+      name_prefix       = "fe-"
+      protocol          = "HTTP"
+      port              = 3000
+      target_type       = "ip"
       create_attachment = false
-      
+
       health_check = {
         enabled             = true
         interval            = 30
@@ -109,14 +109,14 @@ module "alb" {
         matcher             = "200-399"
       }
     }
-    
+
     sfu = {
-      name_prefix      = "sfu-"
-      protocol         = "HTTP"
-      port             = 8080
-      target_type      = "ip"
+      name_prefix       = "sfu-"
+      protocol          = "HTTP"
+      port              = 8080
+      target_type       = "ip"
       create_attachment = false
-      
+
       health_check = {
         enabled             = true
         interval            = 30
@@ -131,12 +131,12 @@ module "alb" {
     }
 
     grafana = {
-      name_prefix      = "graf-"
-      protocol         = "HTTP"
-      port             = 3000
-      target_type      = "ip"
+      name_prefix       = "graf-"
+      protocol          = "HTTP"
+      port              = 3000
+      target_type       = "ip"
       create_attachment = false
-      
+
       health_check = {
         enabled             = true
         interval            = 30
