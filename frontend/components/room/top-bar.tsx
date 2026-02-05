@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { useRoomStore } from "@/store/useRoomStore";
-import { 
-  Users, 
-  Shield, 
-  Copy, 
-  Check, 
-  Clock,
-  Wifi,
-  WifiOff,
-  AlertTriangle
-} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRoomStore } from "@/store/useRoomStore";
+import {
+    AlertTriangle,
+    Check,
+    Clock,
+    Copy,
+    Shield,
+    Users,
+    Wifi,
+    WifiOff
+} from "lucide-react";
+import { useEffect, useState } from "react";
 
 interface TopBarProps {
   roomId: string;
@@ -48,56 +48,56 @@ export function TopBar({ roomId, participantCount, onToggleSidePanel, showSidePa
   const getConnectionStatus = () => {
     switch (status) {
       case "connected":
-        return { icon: Wifi, color: "text-emerald-400", text: "Connected" };
+        return { icon: Wifi, color: "text-zinc-400", text: "Connected" };
       case "connecting":
-        return { icon: AlertTriangle, color: "text-yellow-400", text: "Connecting" };
+        return { icon: AlertTriangle, color: "text-zinc-400", text: "Connecting" };
       case "disconnected":
-        return { icon: WifiOff, color: "text-red-400", text: "Disconnected" };
+        return { icon: WifiOff, color: "text-zinc-500", text: "Disconnected" };
       default:
-        return { icon: WifiOff, color: "text-gray-400", text: "Offline" };
+        return { icon: WifiOff, color: "text-zinc-600", text: "Offline" };
     }
   };
 
   const connectionStatus = getConnectionStatus();
   const StatusIcon = connectionStatus.icon;
 
-  const speakerName = dominantSpeakerId 
+  const speakerName = dominantSpeakerId
     ? (dominantSpeakerId === "local" ? "You" : peers[dominantSpeakerId]?.name || "Unknown")
     : null;
 
   return (
-    <div className="bg-slate-800/90 backdrop-blur-sm border-b border-slate-700/50 px-6 py-3">
+    <div className="bg-background/95 backdrop-blur-md border-b border-border px-6 py-3 shadow-sm">
       <div className="flex items-center justify-between">
         {/* Left Section - Room Info */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-            <span className="text-sm font-medium text-slate-200">Live</span>
+            <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+            <span className="text-sm font-medium text-foreground">Live</span>
           </div>
-          
-          <div className="h-4 w-px bg-slate-600" />
-          
+
+          <div className="h-4 w-px bg-border" />
+
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={copyRoomId}
-              className="h-8 px-3 text-slate-300 hover:text-white hover:bg-slate-700/50"
+              className="h-7 px-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50"
             >
               <span className="text-xs font-mono">{roomId}</span>
               {copied ? (
-                <Check className="w-3 h-3 ml-2 text-emerald-400" />
+                <Check className="w-3 h-3 ml-2 text-primary" />
               ) : (
                 <Copy className="w-3 h-3 ml-2" />
               )}
             </Button>
           </div>
 
-          <div className="h-4 w-px bg-slate-600" />
+          <div className="h-4 w-px bg-border" />
 
           <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-slate-400" />
-            <span className="text-sm text-slate-300">
+            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground font-mono">
               {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
@@ -106,9 +106,9 @@ export function TopBar({ roomId, participantCount, onToggleSidePanel, showSidePa
         {/* Center Section - Speaking Indicator */}
         <div className="flex items-center gap-3">
           {speakerName && (
-            <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-3 py-1">
-              <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-              <span className="text-sm text-emerald-400 font-medium">
+            <div className="flex items-center gap-2 bg-secondary/50 border border-border rounded-full px-3 py-1">
+              <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
+              <span className="text-xs text-secondary-foreground font-medium">
                 {speakerName} speaking
               </span>
             </div>
@@ -119,13 +119,13 @@ export function TopBar({ roomId, participantCount, onToggleSidePanel, showSidePa
         <div className="flex items-center gap-4">
           {/* Connection Status */}
           <div className="flex items-center gap-2">
-            <StatusIcon className={cn("w-4 h-4", connectionStatus.color)} />
-            <span className={cn("text-sm", connectionStatus.color)}>
+            <StatusIcon className={cn("w-3.5 h-3.5", connectionStatus.color)} />
+            <span className={cn("text-xs font-medium", connectionStatus.color)}>
               {connectionStatus.text}
             </span>
           </div>
 
-          <div className="h-4 w-px bg-slate-600" />
+          <div className="h-4 w-px bg-border" />
 
           {/* Participants Button */}
           <Button
@@ -133,18 +133,17 @@ export function TopBar({ roomId, participantCount, onToggleSidePanel, showSidePa
             size="sm"
             onClick={onToggleSidePanel}
             className={cn(
-              "h-8 px-3 text-slate-300 hover:text-white hover:bg-slate-700/50",
-              showSidePanel && "bg-slate-700/50 text-white"
+              "h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-secondary/50",
+              showSidePanel && "bg-secondary text-secondary-foreground"
             )}
           >
             <Users className="w-4 h-4 mr-2" />
-            <span className="text-sm">{participantCount}</span>
+            <span className="text-xs font-mono">{participantCount}</span>
           </Button>
 
           {/* Security Indicator */}
-          <div className="flex items-center gap-1">
-            <Shield className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs text-slate-400">Secure</span>
+          <div className="flex items-center gap-1 opacity-50 hover:opacity-100 transition-opacity">
+            <Shield className="w-3.5 h-3.5 text-muted-foreground" />
           </div>
         </div>
       </div>

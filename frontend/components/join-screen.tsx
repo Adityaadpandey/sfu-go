@@ -1,36 +1,36 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, memo } from "react";
-import { useSearchParams } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { useWebRTCContext } from "@/components/webrtc-provider";
-import { useRoomStore } from "@/store/useRoomStore";
-import { 
-  Video, 
-  VideoOff, 
-  Mic, 
-  MicOff, 
-  Settings, 
-  Users,
-  Calendar,
-  Clock,
-  Shield,
-  Zap
-} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRoomStore } from "@/store/useRoomStore";
+import {
+    Calendar,
+    Clock,
+    Mic,
+    MicOff,
+    Settings,
+    Shield,
+    Users,
+    Video,
+    VideoOff,
+    Zap
+} from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 // Memoized video preview component to prevent re-renders
-const VideoPreview = memo(({ 
-  previewStream, 
-  isCameraOn, 
-  isMicOn, 
-  name, 
-  onToggleCamera, 
-  onToggleMic 
+const VideoPreview = memo(({
+  previewStream,
+  isCameraOn,
+  isMicOn,
+  name,
+  onToggleCamera,
+  onToggleMic
 }: {
   previewStream: MediaStream | null;
   isCameraOn: boolean;
@@ -48,8 +48,8 @@ const VideoPreview = memo(({
   }, [previewStream]);
 
   return (
-    <Card className="bg-slate-800/50 border-slate-700/50 overflow-hidden">
-      <div className="relative aspect-video bg-slate-900">
+    <Card className="bg-muted/30 border-border overflow-hidden">
+      <div className="relative aspect-video bg-black">
         {previewStream && isCameraOn ? (
           <video
             ref={videoRef}
@@ -59,8 +59,8 @@ const VideoPreview = memo(({
             className="w-full h-full object-cover transform scale-x-[-1]"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center bg-linear-to-br from-slate-700 to-slate-800">
-            <div className="w-20 h-20 rounded-full bg-linear-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-2xl">
+          <div className="w-full h-full flex items-center justify-center bg-secondary/20">
+            <div className="w-20 h-20 rounded-full bg-secondary flex items-center justify-center text-secondary-foreground font-bold text-2xl">
               {name ? name.charAt(0).toUpperCase() : "?"}
             </div>
           </div>
@@ -72,10 +72,10 @@ const VideoPreview = memo(({
             variant="ghost"
             size="sm"
             className={cn(
-              "h-10 w-10 rounded-full transition-all duration-200",
-              isCameraOn 
-                ? "bg-slate-700/50 hover:bg-slate-600/50 text-white" 
-                : "bg-red-500 hover:bg-red-600 text-white"
+              "h-10 w-10 rounded-full transition-all duration-200 border",
+              isCameraOn
+                ? "bg-secondary/80 hover:bg-secondary text-secondary-foreground border-transparent"
+                : "bg-destructive text-destructive-foreground hover:bg-destructive/90 border-transparent"
             )}
             onClick={onToggleCamera}
           >
@@ -85,10 +85,10 @@ const VideoPreview = memo(({
             variant="ghost"
             size="sm"
             className={cn(
-              "h-10 w-10 rounded-full transition-all duration-200",
-              isMicOn 
-                ? "bg-slate-700/50 hover:bg-slate-600/50 text-white" 
-                : "bg-red-500 hover:bg-red-600 text-white"
+              "h-10 w-10 rounded-full transition-all duration-200 border",
+              isMicOn
+                ? "bg-secondary/80 hover:bg-secondary text-secondary-foreground border-transparent"
+                : "bg-destructive text-destructive-foreground hover:bg-destructive/90 border-transparent"
             )}
             onClick={onToggleMic}
           >
@@ -98,7 +98,7 @@ const VideoPreview = memo(({
 
         {/* Status Badges */}
         <div className="absolute top-4 left-4 flex items-center gap-2">
-          <Badge variant="secondary" className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+          <Badge variant="secondary" className="bg-background/80 backdrop-blur-sm text-foreground border-border">
             Preview
           </Badge>
         </div>
@@ -137,7 +137,7 @@ export function JoinScreen() {
   // Get preview stream only once
   useEffect(() => {
     let mounted = true;
-    
+
     const getPreviewStream = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -154,7 +154,7 @@ export function JoinScreen() {
             autoGainControl: settings.autoGainControl,
           }
         });
-        
+
         if (mounted) {
           previewStreamRef.current = stream;
           setPreviewStream(stream);
@@ -178,7 +178,7 @@ export function JoinScreen() {
       if (s) s.getTracks().forEach(track => track.stop());
       previewStreamRef.current = null;
     };
-  }, [settings.selectedCameraId, settings.selectedMicId, settings.hdVideo, settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl]); // Re-acquire if devices/settings change
+  }, [settings.selectedCameraId, settings.selectedMicId, settings.hdVideo, settings.noiseSuppression, settings.echoCancellation, settings.autoGainControl]);
 
   // Memoized toggle functions to prevent re-renders
   const toggleCamera = useCallback(() => {
@@ -213,7 +213,6 @@ export function JoinScreen() {
     }
   }, [roomId, name, isConnecting, handleJoin]);
 
-  // Memoized input change handlers to prevent VideoPreview re-renders
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setName(e.target.value);
   }, []);
@@ -223,7 +222,7 @@ export function JoinScreen() {
     setRoomId(e.target.value);
   }, []);
 
-  // Prefill room from URL query (?room=abc or ?roomId=abc)
+  // Prefill room from URL query
   useEffect(() => {
     const fromUrl = searchParams.get("room") || searchParams.get("roomId") || "";
     if (!fromUrl) return;
@@ -238,20 +237,20 @@ export function JoinScreen() {
         <div className="space-y-8 text-center lg:text-left">
           <div className="space-y-4">
             <div className="flex items-center justify-center lg:justify-start gap-3">
-              <div className="w-12 h-12 bg-linear-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-                <Video className="w-6 h-6 text-white" />
+              <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center shadow-lg">
+                <Video className="w-6 h-6 text-primary-foreground" />
               </div>
-              <div>
-                <h1 className="text-3xl font-bold text-white">VideoMeet</h1>
-                <p className="text-slate-400 text-sm">Professional Video Conferencing</p>
+              <div className="select-none">
+                <h1 className="text-3xl font-bold text-foreground">VideoMeet</h1>
+                <p className="text-muted-foreground text-sm">Professional Video Conferencing</p>
               </div>
             </div>
-            
+
             <div className="space-y-2">
-              <h2 className="text-2xl font-semibold text-white">
+              <h2 className="text-2xl font-semibold text-foreground">
                 Connect with your team
               </h2>
-              <p className="text-slate-400 text-lg">
+              <p className="text-muted-foreground text-lg">
                 High-quality video calls with advanced features for modern teams
               </p>
             </div>
@@ -259,43 +258,43 @@ export function JoinScreen() {
 
           {/* Features */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="flex items-center gap-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <Shield className="w-5 h-5 text-emerald-400" />
+            <div className="flex items-center gap-3 p-4 bg-card rounded-lg border border-border">
+              <Shield className="w-5 h-5 text-foreground" />
               <div>
-                <p className="text-sm font-medium text-white">Secure</p>
-                <p className="text-xs text-slate-400">End-to-end encrypted</p>
+                <p className="text-sm font-medium text-foreground">Secure</p>
+                <p className="text-xs text-muted-foreground">End-to-end encrypted</p>
               </div>
             </div>
-            <div className="flex items-center gap-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <Zap className="w-5 h-5 text-yellow-400" />
+            <div className="flex items-center gap-3 p-4 bg-card rounded-lg border border-border">
+              <Zap className="w-5 h-5 text-foreground" />
               <div>
-                <p className="text-sm font-medium text-white">Fast</p>
-                <p className="text-xs text-slate-400">Low latency calls</p>
+                <p className="text-sm font-medium text-foreground">Fast</p>
+                <p className="text-xs text-muted-foreground">Low latency calls</p>
               </div>
             </div>
-            <div className="flex items-center gap-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <Users className="w-5 h-5 text-blue-400" />
+            <div className="flex items-center gap-3 p-4 bg-card rounded-lg border border-border">
+              <Users className="w-5 h-5 text-foreground" />
               <div>
-                <p className="text-sm font-medium text-white">Scalable</p>
-                <p className="text-xs text-slate-400">Up to 100 participants</p>
+                <p className="text-sm font-medium text-foreground">Scalable</p>
+                <p className="text-xs text-muted-foreground">Up to 100 participants</p>
               </div>
             </div>
-            <div className="flex items-center gap-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <Calendar className="w-5 h-5 text-purple-400" />
+            <div className="flex items-center gap-3 p-4 bg-card rounded-lg border border-border">
+              <Calendar className="w-5 h-5 text-foreground" />
               <div>
-                <p className="text-sm font-medium text-white">Reliable</p>
-                <p className="text-xs text-slate-400">99.9% uptime</p>
+                <p className="text-sm font-medium text-foreground">Reliable</p>
+                <p className="text-xs text-muted-foreground">99.9% uptime</p>
               </div>
             </div>
           </div>
 
           {/* Current Time */}
-          <div className="flex items-center justify-center lg:justify-start gap-2 text-slate-400">
+          <div className="flex items-center justify-center lg:justify-start gap-2 text-muted-foreground">
             <Clock className="w-4 h-4" />
             <span className="text-sm">
-              {currentTime.toLocaleString([], { 
+              {currentTime.toLocaleString([], {
                 weekday: 'long',
-                hour: '2-digit', 
+                hour: '2-digit',
                 minute: '2-digit',
                 month: 'short',
                 day: 'numeric'
@@ -308,9 +307,9 @@ export function JoinScreen() {
         <div className="space-y-6">
           {/* Video Preview */}
           {mediaError ? (
-            <Card className="bg-slate-800/50 border-slate-700/50">
-              <div className="aspect-video bg-slate-900 flex items-center justify-center p-6">
-                <div className="text-center text-slate-400">
+            <Card className="bg-muted/30 border-border">
+              <div className="aspect-video bg-muted/50 flex items-center justify-center p-6">
+                <div className="text-center text-muted-foreground">
                   <VideoOff className="w-12 h-12 mx-auto mb-4 opacity-50" />
                   <p className="text-sm mb-2">Camera Preview Unavailable</p>
                   <p className="text-xs">{mediaError}</p>
@@ -329,16 +328,16 @@ export function JoinScreen() {
           )}
 
           {/* Join Form */}
-          <Card className="bg-slate-800/50 border-slate-700/50">
+          <Card className="bg-card border-border shadow-lg">
             <CardHeader className="text-center">
-              <CardTitle className="text-xl text-white">Join Meeting</CardTitle>
-              <CardDescription className="text-slate-400">
+              <CardTitle className="text-xl text-foreground">Join Meeting</CardTitle>
+              <CardDescription className="text-muted-foreground">
                 Enter your details to join the video conference
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="name" className="text-sm font-medium text-slate-300">
+                <Label htmlFor="name" className="text-sm font-medium text-foreground">
                   Your Name
                 </Label>
                 <Input
@@ -347,13 +346,13 @@ export function JoinScreen() {
                   value={name}
                   onChange={handleNameChange}
                   onKeyPress={handleKeyPress}
-                  className="bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-blue-500/20"
+                  className="bg-secondary/50 border-input text-foreground placeholder:text-muted-foreground focus:ring-primary focus:border-primary"
                   disabled={isConnecting}
                 />
               </div>
-              
+
               <div className="space-y-2">
-                <Label htmlFor="room" className="text-sm font-medium text-slate-300">
+                <Label htmlFor="room" className="text-sm font-medium text-foreground">
                   Meeting ID
                 </Label>
                 <Input
@@ -362,19 +361,19 @@ export function JoinScreen() {
                   value={roomId}
                   onChange={handleRoomIdChange}
                   onKeyPress={handleKeyPress}
-                  className="bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400 focus:border-blue-500 focus:ring-blue-500/20"
+                  className="bg-secondary/50 border-input text-foreground placeholder:text-muted-foreground focus:ring-primary focus:border-primary"
                   disabled={isConnecting}
                 />
               </div>
 
               <Button
-                className="w-full bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 transition-all duration-200 shadow-lg hover:shadow-xl"
+                className="w-full font-semibold py-3 transition-all duration-200 shadow-md hover:shadow-lg"
                 onClick={handleJoin}
                 disabled={!roomId || !name || isConnecting}
               >
                 {isConnecting ? (
                   <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                     Connecting...
                   </div>
                 ) : (
@@ -389,7 +388,7 @@ export function JoinScreen() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-slate-400 hover:text-white"
+                  className="text-muted-foreground hover:text-foreground"
                   onClick={toggleSettingsModal}
                   disabled={isConnecting}
                 >

@@ -66,12 +66,15 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
   };
 
   return (
-    <div className="bg-slate-800/90 backdrop-blur-sm border-t border-slate-700/50 px-6 py-4">
+    <div className="bg-background/95 backdrop-blur-md border-t border-border px-6 py-4 shadow-sm">
       <div className="flex items-center justify-between max-w-4xl mx-auto">
         {/* Left Section - Meeting Info */}
         <div className="flex items-center gap-3">
-          <div className="text-sm text-slate-300">
-            <span className="font-medium">{participantCount}</span> participant{participantCount !== 1 ? 's' : ''}
+          <div className="text-sm text-foreground font-medium">
+            <span className="text-muted-foreground mr-1">Team Meeting</span>
+            <span className="text-xs bg-secondary px-2 py-0.5 rounded-full text-secondary-foreground">
+                {participantCount}
+            </span>
           </div>
         </div>
 
@@ -82,10 +85,10 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             variant="ghost"
             size="lg"
             className={cn(
-              "h-12 w-12 rounded-full transition-all duration-200",
+              "h-12 w-12 rounded-full transition-all duration-200 border",
               isMicOn
-                ? "bg-slate-700/50 hover:bg-slate-600/50 text-white"
-                : "bg-red-500 hover:bg-red-600 text-white shadow-lg"
+                ? "bg-secondary hover:bg-secondary/80 text-secondary-foreground border-transparent"
+                : "bg-destructive text-destructive-foreground hover:bg-destructive/90 border-transparent shadow-md"
             )}
             onClick={toggleMic}
             title={isMicOn ? "Mute microphone" : "Unmute microphone"}
@@ -98,10 +101,10 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             variant="ghost"
             size="lg"
             className={cn(
-              "h-12 w-12 rounded-full transition-all duration-200",
+              "h-12 w-12 rounded-full transition-all duration-200 border",
               isCameraOn
-                ? "bg-slate-700/50 hover:bg-slate-600/50 text-white"
-                : "bg-red-500 hover:bg-red-600 text-white shadow-lg"
+                ? "bg-secondary hover:bg-secondary/80 text-secondary-foreground border-transparent"
+                : "bg-destructive text-destructive-foreground hover:bg-destructive/90 border-transparent shadow-md"
             )}
             onClick={toggleCamera}
             title={isCameraOn ? "Turn off camera" : "Turn on camera"}
@@ -114,10 +117,10 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             variant="ghost"
             size="lg"
             className={cn(
-              "h-12 w-12 rounded-full transition-all duration-200",
+              "h-12 w-12 rounded-full transition-all duration-200 border",
               isScreenShareOn
-                ? "bg-blue-500 hover:bg-blue-600 text-white shadow-lg"
-                : "bg-slate-700/50 hover:bg-slate-600/50 text-white"
+                ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md border-transparent"
+                : "bg-secondary hover:bg-secondary/80 text-secondary-foreground border-transparent"
             )}
             onClick={toggleScreenShare}
             title={isScreenShareOn ? "Stop sharing screen" : "Share screen"}
@@ -130,10 +133,10 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             variant="ghost"
             size="lg"
             className={cn(
-              "h-12 w-12 rounded-full transition-all duration-200",
+              "h-12 w-12 rounded-full transition-all duration-200 border",
               isRaiseHand
-                ? "bg-yellow-500 hover:bg-yellow-600 text-white shadow-lg"
-                : "bg-slate-700/50 hover:bg-slate-600/50 text-white"
+                ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-md border-transparent"
+                : "bg-secondary hover:bg-secondary/80 text-secondary-foreground border-transparent"
             )}
             onClick={handleRaiseHand}
             title={isRaiseHand ? "Lower hand" : "Raise hand"}
@@ -145,7 +148,7 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
           <Button
             variant="ghost"
             size="lg"
-            className="h-12 w-12 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-lg ml-2 transition-all duration-200"
+            className="h-12 w-12 rounded-full bg-destructive/10 hover:bg-destructive/20 text-destructive border-transparent ml-2 transition-all duration-200"
             onClick={handleLeave}
             title="Leave meeting"
           >
@@ -160,16 +163,16 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             variant="ghost"
             size="sm"
             className={cn(
-              "h-10 px-3 rounded-lg transition-all duration-200",
-              sidePanelTab === "participants"
-                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
+              "h-10 px-3 rounded-lg transition-all duration-200 border",
+              sidePanelTab === "participants" && isSidePanelOpen
+                ? "bg-primary/10 text-primary border-primary/20"
+                : "bg-transparent hover:bg-secondary text-muted-foreground hover:text-foreground border-transparent"
             )}
             onClick={() => openSidePanelTab("participants")}
             title="Show participants"
           >
             <Users className="h-4 w-4 mr-2" />
-            <span className="text-sm">{participantCount}</span>
+            <span className="text-xs font-mono">{participantCount}</span>
           </Button>
 
           {/* Debug Logs */}
@@ -177,10 +180,10 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             variant="ghost"
             size="sm"
             className={cn(
-              "h-10 px-3 rounded-lg transition-all duration-200",
-              sidePanelTab === "logs"
-                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
+              "h-10 px-3 rounded-lg transition-all duration-200 border",
+              sidePanelTab === "logs" && isSidePanelOpen
+                ? "bg-primary/10 text-primary border-primary/20"
+                : "bg-transparent hover:bg-secondary text-muted-foreground hover:text-foreground border-transparent"
             )}
             onClick={() => openSidePanelTab("logs")}
             title="Show debug logs"
@@ -192,7 +195,7 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
           <Button
             variant="ghost"
             size="sm"
-            className="h-10 w-10 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white transition-all duration-200"
+            className="h-10 w-10 rounded-lg bg-transparent hover:bg-secondary text-muted-foreground hover:text-foreground transition-all duration-200"
             onClick={toggleSettingsModal}
             title="Open settings"
           >
@@ -203,7 +206,7 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
           <Button
             variant="ghost"
             size="sm"
-            className="h-10 w-10 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white transition-all duration-200"
+            className="h-10 w-10 rounded-lg bg-transparent hover:bg-secondary text-muted-foreground hover:text-foreground transition-all duration-200"
             title="More options"
           >
             <MoreHorizontal className="h-4 w-4" />
