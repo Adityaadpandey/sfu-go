@@ -309,13 +309,16 @@ export const useWebRTC = () => {
             });
         } catch (e) {
             log("Offer error: " + e, "error");
+            negRef.current = false;
+            makingOfferRef.current = false;
             if (negPendRef.current) {
+                negPendRef.current = false;
                 setTimeout(() => negotiate(), 50);
             }
-        } finally {
-            makingOfferRef.current = false;
-            negRef.current = false;
         }
+        // Note: negRef.current stays true until answer is received
+        // Only clear makingOfferRef here since we're done creating the offer
+        makingOfferRef.current = false;
     }, [sendSignalingMessage, log]);
 
     const createPeerConnection = useCallback(async () => {
