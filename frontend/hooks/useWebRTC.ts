@@ -71,9 +71,6 @@ export const useWebRTC = () => {
     const sessionIdRef = useRef<string | null>(null);
     const sessionTokenRef = useRef<string | null>(null);
 
-    // Perfect negotiation (client is polite)
-    const makingOfferRef = useRef(false);
-
     const wsUrl = useMemo(() => resolveWsUrl(), []);
 
     // --- Logging Helper ---
@@ -115,7 +112,6 @@ export const useWebRTC = () => {
         negReadyRef.current = false;
         iceBufRef.current = [];
         peerIdRef.current = "";
-        makingOfferRef.current = false;
         // Keep sessionIdRef and sessionTokenRef for reconnection
 
         if (reconnectTimerRef.current) {
@@ -274,29 +270,13 @@ export const useWebRTC = () => {
 
     // --- WebRTC Handling ---
     const negotiate = useCallback(async () => {
-        if (!pcRef.current) return;
+        if (negRef.current || !pcRef.current) return;
 
-        // Prevent concurrent negotiations
-        if (negRef.current) {
-            negPendRef.current = true;
-            return;
-        }
-
-        // Perfect negotiation: track that we're making an offer
-        makingOfferRef.current = true;
         negRef.current = true;
         negPendRef.current = false;
 
         try {
             const offer = await pcRef.current.createOffer();
-
-            // Check if signaling state changed during createOffer
-            if (pcRef.current.signalingState !== "stable") {
-                makingOfferRef.current = false;
-                negRef.current = false;
-                return;
-            }
-
             await pcRef.current.setLocalDescription(offer);
 
             sendSignalingMessage({
@@ -310,15 +290,11 @@ export const useWebRTC = () => {
         } catch (e) {
             log("Offer error: " + e, "error");
             negRef.current = false;
-            makingOfferRef.current = false;
+            // Retry if needed
             if (negPendRef.current) {
-                negPendRef.current = false;
                 setTimeout(() => negotiate(), 50);
             }
         }
-        // Note: negRef.current stays true until answer is received
-        // Only clear makingOfferRef here since we're done creating the offer
-        makingOfferRef.current = false;
     }, [sendSignalingMessage, log]);
 
     const createPeerConnection = useCallback(async () => {
@@ -647,13 +623,11 @@ export const useWebRTC = () => {
                 if (!pcRef.current || !msg.data || typeof msg.data !== 'object') return;
                 const serverOfferData = msg.data as { sdp: string };
                 try {
-                    // Perfect negotiation: client is polite, check for collision
-                    const offerCollision = makingOfferRef.current ||
-                        pcRef.current.signalingState !== "stable";
-
-                    if (offerCollision) {
-                        log("Offer collision detected, rolling back", "warning");
+                    // Check for collision - if we're in the middle of our own negotiation
+                    if (negRef.current || pcRef.current.signalingState !== "stable") {
+                        log("Offer collision, rolling back our offer", "warning");
                         await pcRef.current.setLocalDescription({ type: "rollback" });
+                        negRef.current = false;
                     }
 
                     await pcRef.current.setRemoteDescription(
