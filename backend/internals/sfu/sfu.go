@@ -579,13 +579,27 @@ func (s *SFU) handleOfferMessage(client *signaling.Client, message signaling.Mes
 		return
 	}
 
+	s.logger.Info("Offer received",
+		zap.String("clientID", client.ID),
+		zap.String("roomID", client.RoomID),
+		zap.String("userID", client.UserID),
+	)
+
 	rm, p := s.getRoomAndPeer(client.RoomID, client.UserID)
 	if rm == nil || p == nil {
+		s.logger.Error("Room or peer not found for offer",
+			zap.String("roomID", client.RoomID),
+			zap.String("userID", client.UserID),
+		)
 		client.SendError(404, "Room or peer not found")
 		return
 	}
 
 	isRenegotiation := p.Connection.RemoteDescription() != nil
+	s.logger.Info("Processing offer",
+		zap.String("peerID", p.ID),
+		zap.Bool("isRenegotiation", isRenegotiation),
+	)
 
 	offer := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offerMsg.SDP}
 	if err := p.SetRemoteDescription(offer); err != nil {
@@ -623,6 +637,10 @@ func (s *SFU) handleOfferMessage(client *signaling.Client, message signaling.Mes
 	client.SendMessage(signaling.Message{
 		Type: signaling.MessageTypeAnswer, Data: answerData, Timestamp: time.Now(),
 	})
+	s.logger.Info("Answer sent",
+		zap.String("peerID", p.ID),
+		zap.String("clientID", client.ID),
+	)
 }
 
 func (s *SFU) handleAnswerMessage(client *signaling.Client, message signaling.Message) {

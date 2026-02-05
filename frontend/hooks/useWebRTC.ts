@@ -382,10 +382,10 @@ export const useWebRTC = () => {
       if (audioTrack) pc.addTrack(audioTrack, stream);
 
       // Pre-allocate recvonly transceivers for potential remote peers
-      // Allocate 50+50 to support up to ~50 remote peers (each sends video + audio)
-      // This is critical - insufficient transceivers causes peer disconnections!
-      for (let i = 0; i < 50; i++) pc.addTransceiver('video', { direction: 'recvonly' });
-      for (let i = 0; i < 50; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
+      // Start with 20+20 for ~20 peers. Dynamic allocation via ensureRecvonlyTransceivers
+      // handles growth up to 50+ peers when server requests renegotiation with trackCount
+      for (let i = 0; i < 20; i++) pc.addTransceiver('video', { direction: 'recvonly' });
+      for (let i = 0; i < 20; i++) pc.addTransceiver('audio', { direction: 'recvonly' });
     } catch (err) {
       log('Media error: ' + err, 'error');
       setStatus('error');
