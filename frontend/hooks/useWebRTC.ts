@@ -41,6 +41,8 @@ export const useWebRTC = () => {
         addLog,
         settings,
         reset,
+        setSessionInfo,
+        clearSessionInfo,
     } = useRoomStore();
 
     const wsRef = useRef<WebSocket | null>(null);
@@ -64,6 +66,13 @@ export const useWebRTC = () => {
     // Connection info for reconnects
     const connectionInfo = useRef({ roomId: "", userId: "", name: "" });
     const peerIdRef = useRef<string>("");
+
+    // Session refs for reconnection
+    const sessionIdRef = useRef<string | null>(null);
+    const sessionTokenRef = useRef<string | null>(null);
+
+    // Perfect negotiation (client is polite)
+    const makingOfferRef = useRef(false);
 
     const wsUrl = useMemo(() => resolveWsUrl(), []);
 
@@ -106,6 +115,8 @@ export const useWebRTC = () => {
         negReadyRef.current = false;
         iceBufRef.current = [];
         peerIdRef.current = "";
+        makingOfferRef.current = false;
+        // Keep sessionIdRef and sessionTokenRef for reconnection
 
         if (reconnectTimerRef.current) {
             window.clearTimeout(reconnectTimerRef.current);
@@ -251,13 +262,23 @@ export const useWebRTC = () => {
 
     // --- WebRTC Handling ---
     const negotiate = useCallback(async () => {
-        if (negRef.current || !pcRef.current) return;
+        if (!pcRef.current) return;
 
+        // Perfect negotiation: track that we're making an offer
+        makingOfferRef.current = true;
         negRef.current = true;
         negPendRef.current = false;
 
         try {
             const offer = await pcRef.current.createOffer();
+
+            // Check if signaling state changed during createOffer
+            if (pcRef.current.signalingState !== "stable") {
+                makingOfferRef.current = false;
+                negRef.current = false;
+                return;
+            }
+
             await pcRef.current.setLocalDescription(offer);
 
             sendSignalingMessage({
@@ -270,11 +291,12 @@ export const useWebRTC = () => {
             });
         } catch (e) {
             log("Offer error: " + e, "error");
-            negRef.current = false;
-            // Retry if needed
             if (negPendRef.current) {
                 setTimeout(() => negotiate(), 50);
             }
+        } finally {
+            makingOfferRef.current = false;
+            negRef.current = false;
         }
     }, [sendSignalingMessage, log]);
 
@@ -388,10 +410,18 @@ export const useWebRTC = () => {
                     negPendRef.current = false;
                     negotiate();
                 }
+            } else if (state === 'disconnected') {
+                // Request ICE restart after 3 seconds of disconnected state
+                setTimeout(() => {
+                    if (pcRef.current?.connectionState === 'disconnected') {
+                        log("Requesting ICE restart", "warning");
+                        sendSignalingMessage({ type: "ice-restart-request", data: {} });
+                    }
+                }, 3000);
             } else if (state === 'failed') {
                 log("WebRTC failed, closing WebSocket to trigger reconnect", "error");
                 try { wsRef.current?.close(); } catch { /* ignore */ }
-            } else if (state === 'closed' || state === 'disconnected') {
+            } else if (state === 'closed') {
                 if (statsIntervalRef.current) {
                     clearInterval(statsIntervalRef.current);
                     statsIntervalRef.current = null;
@@ -416,13 +446,28 @@ export const useWebRTC = () => {
 
             case "join": // Ack from server
                 if (!msg.data || typeof msg.data !== 'object' || !('success' in msg.data)) return;
-                const joinData = msg.data as { success: boolean; peerId?: string; userId?: string };
+                const joinData = msg.data as {
+                    success: boolean;
+                    peerId?: string;
+                    sessionId?: string;
+                    sessionToken?: string;
+                    resumed?: boolean;
+                };
                 if (!joinData.success || !joinData.peerId) {
                     log("Join failed", "error");
                     return;
                 }
                 peerIdRef.current = joinData.peerId;
-                log(`Joined room - peer ${joinData.peerId.slice(0, 8)}`, "success");
+
+                // Store session info for reconnection
+                if (joinData.sessionId && joinData.sessionToken) {
+                    sessionIdRef.current = joinData.sessionId;
+                    sessionTokenRef.current = joinData.sessionToken;
+                    setSessionInfo(joinData.sessionId, joinData.sessionToken);
+                }
+
+                const resumeMsg = joinData.resumed ? " (session resumed)" : "";
+                log(`Joined room - peer ${joinData.peerId.slice(0, 8)}${resumeMsg}`, "success");
                 setStatus("connected");
                 await createPeerConnection();
                 break;
@@ -576,6 +621,59 @@ export const useWebRTC = () => {
                 }
                 break;
 
+            case "offer":
+                // Server-initiated offer (for renegotiation)
+                if (!pcRef.current || !msg.data || typeof msg.data !== 'object') return;
+                const serverOfferData = msg.data as { sdp: string };
+                try {
+                    // Perfect negotiation: client is polite, check for collision
+                    const offerCollision = makingOfferRef.current ||
+                        pcRef.current.signalingState !== "stable";
+
+                    if (offerCollision) {
+                        log("Offer collision detected, rolling back", "warning");
+                        await pcRef.current.setLocalDescription({ type: "rollback" });
+                    }
+
+                    await pcRef.current.setRemoteDescription(
+                        new RTCSessionDescription({ type: "offer", sdp: serverOfferData.sdp })
+                    );
+
+                    const answer = await pcRef.current.createAnswer();
+                    await pcRef.current.setLocalDescription(answer);
+
+                    sendSignalingMessage({
+                        type: "answer",
+                        data: {
+                            sdp: answer.sdp!,
+                            type: "answer",
+                            peerId: peerIdRef.current
+                        }
+                    });
+                } catch (e) {
+                    log("Failed to handle server offer: " + e, "error");
+                }
+                break;
+
+            case "ice-restart-offer":
+                if (!pcRef.current || !msg.data || typeof msg.data !== 'object') return;
+                const iceRestartData = msg.data as { sdp: string };
+                try {
+                    await pcRef.current.setRemoteDescription(
+                        new RTCSessionDescription({ type: "offer", sdp: iceRestartData.sdp })
+                    );
+                    const answer = await pcRef.current.createAnswer();
+                    await pcRef.current.setLocalDescription(answer);
+                    sendSignalingMessage({
+                        type: "answer",
+                        data: { sdp: answer.sdp!, type: "answer", peerId: peerIdRef.current }
+                    });
+                    log("ICE restart completed", "success");
+                } catch (e) {
+                    log("ICE restart failed: " + e, "error");
+                }
+                break;
+
             case "error":
                 if (msg.data && typeof msg.data === 'object') {
                     const errorData = msg.data as { message: string };
@@ -583,7 +681,7 @@ export const useWebRTC = () => {
                 }
                 break;
         }
-    }, [log, setStatus, addPeer, removePeer, setDominantSpeaker, setPeerQuality, setSimulcastLayers, createPeerConnection, negotiate]);
+    }, [log, setStatus, addPeer, removePeer, setDominantSpeaker, setPeerQuality, setSimulcastLayers, createPeerConnection, negotiate, sendSignalingMessage, setSessionInfo]);
 
     // --- WebSocket Handling ---
 
@@ -610,7 +708,13 @@ export const useWebRTC = () => {
             log("Connected to server", "success");
             sendSignalingMessage({
                 type: "join",
-                data: { roomId: newRoomId, userId: newUserId, name: newName },
+                data: {
+                    roomId: newRoomId,
+                    userId: newUserId,
+                    name: newName,
+                    sessionId: sessionIdRef.current,
+                    sessionToken: sessionTokenRef.current,
+                },
             });
         };
 
@@ -854,6 +958,11 @@ export const useWebRTC = () => {
     // --- Disconnect ---
     const disconnect = useCallback(() => {
         disconnectRequestedRef.current = true;
+        // Clear session on explicit disconnect
+        sessionIdRef.current = null;
+        sessionTokenRef.current = null;
+        clearSessionInfo();
+
         if (wsRef.current?.readyState === WebSocket.OPEN) {
             sendSignalingMessage({
                 type: "leave",
@@ -864,7 +973,7 @@ export const useWebRTC = () => {
         cleanup();
         reset();
         log("Left room", "info");
-    }, [sendSignalingMessage, cleanup, reset, log]);
+    }, [sendSignalingMessage, cleanup, reset, log, clearSessionInfo]);
 
     useEffect(() => {
         return () => cleanup();

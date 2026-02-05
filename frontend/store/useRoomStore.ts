@@ -57,6 +57,10 @@ interface RoomState {
     // Stats
     trackCount: number;
 
+    // Session management
+    sessionId: string | null;
+    sessionToken: string | null;
+
     // Actions
     setRoomInfo: (roomId: string, userId: string, name: string) => void;
     setStatus: (status: RoomStatus) => void;
@@ -82,7 +86,11 @@ interface RoomState {
     // Settings
     updateSettings: (settings: Partial<Settings>) => void;
     toggleSettingsModal: () => void;
-    
+
+    // Session
+    setSessionInfo: (sessionId: string, sessionToken: string) => void;
+    clearSessionInfo: () => void;
+
     reset: () => void;
 }
 
@@ -118,6 +126,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     settings: initialSettings,
     showSettingsModal: false,
     trackCount: 0,
+    sessionId: null,
+    sessionToken: null,
 
     setRoomInfo: (roomId, userId, name) => set({ roomId, userId, userName: name }),
     
@@ -219,6 +229,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         showSettingsModal: !state.showSettingsModal
     })),
 
+    setSessionInfo: (sessionId, sessionToken) => set({ sessionId, sessionToken }),
+    clearSessionInfo: () => set({ sessionId: null, sessionToken: null }),
+
     reset: () => set({
         roomId: null,
         userId: null,
@@ -237,6 +250,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         trackCount: 0,
         logs: [],
         showSettingsModal: false,
+        sessionId: null,
+        sessionToken: null,
     })
 }));
    
