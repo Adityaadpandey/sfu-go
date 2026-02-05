@@ -1,0 +1,126 @@
+{
+  "dashboard": {
+    "title": "SFU Server Monitoring",
+    "tags": ["sfu", "webrtc", "monitoring"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Rooms",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "sfu_active_rooms_total",
+            "legendFormat": "Active Rooms"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Active Peers",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "sfu_active_peers_total",
+            "legendFormat": "Active Peers"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "WebSocket Connections",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "sfu_connections_total",
+            "legendFormat": "Total Connections"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Messages Rate",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "rate(sfu_messages_sent_total[5m])",
+            "legendFormat": "Messages Sent/sec"
+          },
+          {
+            "expr": "rate(sfu_messages_received_total[5m])",
+            "legendFormat": "Messages Received/sec"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Bandwidth Usage",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "rate(sfu_bytes_transferred_total[5m])",
+            "legendFormat": "Bytes/sec"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "CPU Usage",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total[5m]) * 100",
+            "legendFormat": "CPU %"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Memory Usage",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "process_resident_memory_bytes / 1024 / 1024",
+            "legendFormat": "Memory (MB)"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Goroutines",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "go_goroutines",
+            "legendFormat": "Goroutines"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Error Rate",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 32, "w": 24, "h": 8 },
+        "targets": [
+          {
+            "expr": "rate(sfu_errors_total[5m])",
+            "legendFormat": "Errors/sec"
+          }
+        ]
+      }
+    ],
+    "refresh": "5s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    }
+  }
+}

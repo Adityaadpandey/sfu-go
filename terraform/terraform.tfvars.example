@@ -1,0 +1,29 @@
+# AWS Configuration
+aws_region = "ap-south-1"
+
+# Project Configuration
+project_name = "sfu-app"
+
+# Network Configuration
+vpc_cidr           = "10.0.0.0/16"
+availability_zones = ["ap-south-1a", "ap-south-1b"]
+private_subnets    = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+public_subnets     = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+# Redis Configuration
+redis_node_type = "cache.t3.micro"  # Options: cache.t3.micro, cache.t3.small, cache.t3.medium, cache.r6g.large
+
+# SFU Configuration
+sfu_max_rooms          = 1000
+sfu_max_peers_per_room = 100
+
+# Monitoring
+enable_monitoring = true
+
+# Tags
+tags = {
+  Project     = "SFU"
+  Environment = "production"
+  ManagedBy   = "Terraform"
+  Team        = "Platform"
+}

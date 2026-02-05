@@ -42,7 +42,8 @@ services:
     ports:
       - "9091:9090"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./backend/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./backend/monitoring/prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -60,11 +61,15 @@ services:
       - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+      - GF_SERVER_ROOT_URL=http://localhost:3001
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./backend/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./backend/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
     restart: unless-stopped
+    depends_on:
+      - prometheus
     networks:
       - sfu-network
 

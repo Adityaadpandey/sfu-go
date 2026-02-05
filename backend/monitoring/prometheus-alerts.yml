@@ -1,0 +1,103 @@
+groups:
+  - name: sfu_alerts
+    interval: 30s
+    rules:
+      # High number of active rooms
+      - alert: HighRoomCount
+        expr: sfu_active_rooms_total > 800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of active rooms"
+          description: "SFU has {{ $value }} active rooms (threshold: 800)"
+
+      # Critical room count
+      - alert: CriticalRoomCount
+        expr: sfu_active_rooms_total > 950
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical number of active rooms"
+          description: "SFU has {{ $value }} active rooms, approaching limit"
+
+      # High peer count
+      - alert: HighPeerCount
+        expr: sfu_active_peers_total > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of active peers"
+          description: "SFU has {{ $value }} active peers"
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(sfu_errors_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors/sec"
+
+      # Critical error rate
+      - alert: CriticalErrorRate
+        expr: rate(sfu_errors_total[5m]) > 50
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical error rate detected"
+          description: "Error rate is {{ $value }} errors/sec"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 > 1500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}MB"
+
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}%"
+
+      # WebSocket connection issues
+      - alert: LowConnectionCount
+        expr: sfu_connections_total < 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No active WebSocket connections"
+          description: "SFU has no active connections for 5 minutes"
+
+      # High goroutine count
+      - alert: HighGoroutineCount
+        expr: go_goroutines > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High goroutine count"
+          description: "Goroutine count is {{ $value }}"
+
+      # Redis connection issues
+      - alert: RedisConnectionFailed
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis connection failed"
+          description: "Cannot connect to Redis"
