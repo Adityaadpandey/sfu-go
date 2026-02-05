@@ -1,38 +1,37 @@
 "use client";
 
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWebRTCContext } from "@/components/webrtc-provider";
 import { cn } from "@/lib/utils";
 import { useRoomStore } from "@/store/useRoomStore";
-import { 
-  Mic, 
-  MicOff, 
-  MonitorUp, 
-  PhoneOff, 
-  Video, 
-  VideoOff, 
-  Settings, 
-  Users,
-  MessageSquare,
-  MoreHorizontal,
-  Hand,
-  Terminal
+import {
+    Hand,
+    Mic,
+    MicOff,
+    MonitorUp,
+    MoreHorizontal,
+    PhoneOff,
+    Settings,
+    Terminal,
+    Users,
+    Video,
+    VideoOff
 } from "lucide-react";
+import { useState } from "react";
 
 interface ControlsProps {
   onToggleSidePanel: () => void;
-  onChangeSidePanelTab: (tab: "participants" | "chat" | "logs") => void;
-  sidePanelTab: "participants" | "chat" | "logs";
+  onChangeSidePanelTab: (tab: "participants" | "logs") => void;
+  sidePanelTab: "participants" | "logs";
   isSidePanelOpen: boolean;
 }
 
 export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab, isSidePanelOpen }: ControlsProps) {
   const { toggleMic, toggleCamera, toggleScreenShare, disconnect } = useWebRTCContext();
-  const { 
-    isMicOn, 
-    isCameraOn, 
-    isScreenShareOn, 
+  const {
+    isMicOn,
+    isCameraOn,
+    isScreenShareOn,
     toggleSettingsModal,
     peers
   } = useRoomStore();
@@ -52,7 +51,7 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
 
   const participantCount = Object.keys(peers).length + 1;
 
-  const openSidePanelTab = (tab: "participants" | "chat" | "logs") => {
+  const openSidePanelTab = (tab: "participants" | "logs") => {
     // If the panel is open and the user clicks the active tab, treat it as "close".
     if (isSidePanelOpen && sidePanelTab === tab) {
       onToggleSidePanel();
@@ -84,8 +83,8 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             size="lg"
             className={cn(
               "h-12 w-12 rounded-full transition-all duration-200",
-              isMicOn 
-                ? "bg-slate-700/50 hover:bg-slate-600/50 text-white" 
+              isMicOn
+                ? "bg-slate-700/50 hover:bg-slate-600/50 text-white"
                 : "bg-red-500 hover:bg-red-600 text-white shadow-lg"
             )}
             onClick={toggleMic}
@@ -100,8 +99,8 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             size="lg"
             className={cn(
               "h-12 w-12 rounded-full transition-all duration-200",
-              isCameraOn 
-                ? "bg-slate-700/50 hover:bg-slate-600/50 text-white" 
+              isCameraOn
+                ? "bg-slate-700/50 hover:bg-slate-600/50 text-white"
                 : "bg-red-500 hover:bg-red-600 text-white shadow-lg"
             )}
             onClick={toggleCamera}
@@ -116,8 +115,8 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             size="lg"
             className={cn(
               "h-12 w-12 rounded-full transition-all duration-200",
-              isScreenShareOn 
-                ? "bg-blue-500 hover:bg-blue-600 text-white shadow-lg" 
+              isScreenShareOn
+                ? "bg-blue-500 hover:bg-blue-600 text-white shadow-lg"
                 : "bg-slate-700/50 hover:bg-slate-600/50 text-white"
             )}
             onClick={toggleScreenShare}
@@ -132,8 +131,8 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             size="lg"
             className={cn(
               "h-12 w-12 rounded-full transition-all duration-200",
-              isRaiseHand 
-                ? "bg-yellow-500 hover:bg-yellow-600 text-white shadow-lg" 
+              isRaiseHand
+                ? "bg-yellow-500 hover:bg-yellow-600 text-white shadow-lg"
                 : "bg-slate-700/50 hover:bg-slate-600/50 text-white"
             )}
             onClick={handleRaiseHand}
@@ -162,8 +161,8 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             size="sm"
             className={cn(
               "h-10 px-3 rounded-lg transition-all duration-200",
-              sidePanelTab === "participants" 
-                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" 
+              sidePanelTab === "participants"
+                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
                 : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
             )}
             onClick={() => openSidePanelTab("participants")}
@@ -173,30 +172,14 @@ export function Controls({ onToggleSidePanel, onChangeSidePanelTab, sidePanelTab
             <span className="text-sm">{participantCount}</span>
           </Button>
 
-          {/* Chat */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "h-10 px-3 rounded-lg transition-all duration-200",
-              sidePanelTab === "chat" 
-                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" 
-                : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
-            )}
-            onClick={() => openSidePanelTab("chat")}
-            title="Open chat"
-          >
-            <MessageSquare className="h-4 w-4" />
-          </Button>
-
           {/* Debug Logs */}
           <Button
             variant="ghost"
             size="sm"
             className={cn(
               "h-10 px-3 rounded-lg transition-all duration-200",
-              sidePanelTab === "logs" 
-                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" 
+              sidePanelTab === "logs"
+                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
                 : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
             )}
             onClick={() => openSidePanelTab("logs")}

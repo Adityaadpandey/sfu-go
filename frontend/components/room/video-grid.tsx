@@ -1,17 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRoomStore } from "@/store/useRoomStore";
-import { ParticipantTile } from "./participant-tile";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { 
-  Grid3X3, 
-  Maximize2, 
-  Users,
-  LayoutGrid,
-  Monitor
+import { useRoomStore } from "@/store/useRoomStore";
+import {
+    LayoutGrid,
+    Monitor,
+    Users
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ParticipantTile } from "./participant-tile";
 
 type ViewMode = "grid" | "speaker" | "gallery";
 
@@ -34,7 +32,7 @@ export function VideoGrid() {
   const getGridClass = (count: number, mode: ViewMode) => {
     if (mode === "speaker") return "speaker-view";
     if (mode === "gallery") return "gallery-view";
-    
+
     // Grid mode
     if (count === 1) return "grid-cols-1";
     if (count === 2) return "grid-cols-1 lg:grid-cols-2";
@@ -51,9 +49,30 @@ export function VideoGrid() {
 
   const renderSpeakerView = () => {
     const speakerId = pinnedParticipant || dominantSpeakerId;
-    const mainParticipant = speakerId === "local" || speakerId === userId 
-      ? { id: "local", name: userName || "You", stream: localStream, isLocal: true }
-      : allPeers.find(p => p.id === speakerId);
+
+    const isLocalMain = speakerId === "local" || speakerId === userId;
+    const mainPeer = allPeers.find(p => p.id === speakerId);
+
+    // If we can't find the participant, show empty state
+    if (!isLocalMain && !mainPeer) {
+        return (
+            <div className="flex flex-col h-full">
+                <div className="flex-1 p-4 pb-2">
+                    <div className="w-full h-full bg-slate-800 rounded-xl flex items-center justify-center">
+                        <div className="text-center text-slate-400">
+                            <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                            <p>Participant not found</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const mainId = isLocalMain ? "local" : mainPeer!.id;
+    const mainName = isLocalMain ? (userName || "You") : mainPeer!.name;
+    const mainStream = isLocalMain ? localStream : pickBestStream(remoteStreams[mainId]);
+    const isMainLocal = isLocalMain;
 
     const otherParticipants = [
       ...(speakerId !== "local" && speakerId !== userId ? [{ id: "local", name: userName || "You", stream: localStream, isLocal: true }] : []),
@@ -64,44 +83,39 @@ export function VideoGrid() {
       <div className="flex flex-col h-full">
         {/* Main Speaker */}
         <div className="flex-1 p-4 pb-2">
-          {mainParticipant ? (
             <ParticipantTile
-              id={mainParticipant.id}
-              name={mainParticipant.name}
-              stream={mainParticipant.stream || pickBestStream(remoteStreams[mainParticipant.id])}
-              isLocal={mainParticipant.isLocal || mainParticipant.id === "local"}
-              isSpeaking={mainParticipant.id === dominantSpeakerId}
+              id={mainId}
+              name={mainName}
+              stream={mainStream}
+              isLocal={isMainLocal}
+              isSpeaking={mainId === dominantSpeakerId}
               isMainView={true}
-              onPin={() => setPinnedParticipant(pinnedParticipant === mainParticipant.id ? null : mainParticipant.id)}
-              isPinned={pinnedParticipant === mainParticipant.id}
+              onPin={() => setPinnedParticipant(pinnedParticipant === mainId ? null : mainId)}
+              isPinned={pinnedParticipant === mainId}
             />
-          ) : (
-            <div className="w-full h-full bg-slate-800 rounded-xl flex items-center justify-center">
-              <div className="text-center text-slate-400">
-                <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p>No active speaker</p>
-              </div>
-            </div>
-          )}
+
         </div>
 
         {/* Thumbnail Strip */}
         {otherParticipants.length > 0 && (
           <div className="h-32 px-4 pb-4">
             <div className="flex gap-2 overflow-x-auto pb-2">
-              {otherParticipants.map((participant) => (
+              {otherParticipants.map((participant) => {
+                const pStream = participant.id === "local" ? localStream : pickBestStream(remoteStreams[participant.id]);
+                return (
                 <div key={participant.id} className="shrink-0 w-24">
                   <ParticipantTile
                     id={participant.id}
                     name={participant.name}
-                    stream={participant.stream || pickBestStream(remoteStreams[participant.id])}
+                    stream={pStream}
                     isLocal={participant.isLocal || participant.id === "local"}
                     isSpeaking={participant.id === dominantSpeakerId}
                     isThumbnail={true}
                     onPin={() => setPinnedParticipant(participant.id)}
                   />
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -151,8 +165,8 @@ export function VideoGrid() {
             size="sm"
             className={cn(
               "h-8 px-3 text-xs",
-              viewMode === "grid" 
-                ? "bg-blue-500/20 text-blue-400" 
+              viewMode === "grid"
+                ? "bg-blue-500/20 text-blue-400"
                 : "text-slate-400 hover:text-white"
             )}
             onClick={() => setViewMode("grid")}
@@ -165,8 +179,8 @@ export function VideoGrid() {
             size="sm"
             className={cn(
               "h-8 px-3 text-xs",
-              viewMode === "speaker" 
-                ? "bg-blue-500/20 text-blue-400" 
+              viewMode === "speaker"
+                ? "bg-blue-500/20 text-blue-400"
                 : "text-slate-400 hover:text-white"
             )}
             onClick={() => setViewMode("speaker")}

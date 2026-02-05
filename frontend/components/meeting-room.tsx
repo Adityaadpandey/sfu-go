@@ -1,16 +1,16 @@
 "use client";
 
-import { useState } from "react";
-import { VideoGrid } from "@/components/room/video-grid";
 import { Controls } from "@/components/room/controls";
-import { TopBar } from "@/components/room/top-bar";
 import { SidePanel } from "@/components/room/side-panel";
-import { useRoomStore } from "@/store/useRoomStore";
+import { TopBar } from "@/components/room/top-bar";
+import { VideoGrid } from "@/components/room/video-grid";
 import { cn } from "@/lib/utils";
+import { useRoomStore } from "@/store/useRoomStore";
+import { useState } from "react";
 
 export function MeetingRoom() {
   const [showSidePanel, setShowSidePanel] = useState(false);
-  const [sidePanelTab, setSidePanelTab] = useState<"participants" | "chat" | "logs">("participants");
+  const [sidePanelTab, setSidePanelTab] = useState<"participants" | "logs">("participants");
   const { roomId, userName, peers } = useRoomStore();
 
   const participantCount = Object.keys(peers).length + 1; // +1 for local user
@@ -18,7 +18,7 @@ export function MeetingRoom() {
   return (
     <div className="flex flex-col h-screen bg-slate-900 text-white overflow-hidden">
       {/* Top Bar */}
-      <TopBar 
+      <TopBar
         roomId={roomId || ""}
         participantCount={participantCount}
         onToggleSidePanel={() => setShowSidePanel(!showSidePanel)}
@@ -39,7 +39,7 @@ export function MeetingRoom() {
 
           {/* Controls */}
           <div className="shrink-0">
-            <Controls 
+            <Controls
               onToggleSidePanel={() => setShowSidePanel(!showSidePanel)}
               onChangeSidePanelTab={setSidePanelTab}
               sidePanelTab={sidePanelTab}
@@ -49,7 +49,7 @@ export function MeetingRoom() {
         </div>
 
         {/* Side Panel */}
-        <SidePanel 
+        <SidePanel
           isOpen={showSidePanel}
           activeTab={sidePanelTab}
           onTabChange={setSidePanelTab}

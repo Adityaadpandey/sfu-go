@@ -1,42 +1,35 @@
 "use client";
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import { useRoomStore } from "@/store/useRoomStore";
-import { 
-  Users, 
-  MessageSquare, 
-  Settings,
-  X,
-  Mic,
-  MicOff,
-  Video,
-  VideoOff,
-  MoreVertical,
-  Crown,
-  Send,
-  Terminal
-} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRoomStore } from "@/store/useRoomStore";
+import {
+    Mic,
+    MicOff,
+    MoreVertical,
+    Terminal,
+    Users,
+    Video,
+    VideoOff,
+    X
+} from "lucide-react";
 
 interface SidePanelProps {
   isOpen: boolean;
-  activeTab: "participants" | "chat" | "logs";
-  onTabChange: (tab: "participants" | "chat" | "logs") => void;
+  activeTab: "participants" | "logs";
+  onTabChange: (tab: "participants" | "logs") => void;
   onClose: () => void;
 }
 
 export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanelProps) {
-  const [chatMessage, setChatMessage] = useState("");
-  const { 
-    peers, 
-    userName, 
-    dominantSpeakerId, 
-    isMicOn, 
+  const {
+    peers,
+    userName,
+    dominantSpeakerId,
+    isMicOn,
     isCameraOn,
     logs,
     clearLogs
@@ -61,21 +54,6 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
     }))
   ];
 
-  const sendChatMessage = () => {
-    if (chatMessage.trim()) {
-      // TODO: Implement chat functionality
-      console.log("Sending message:", chatMessage);
-      setChatMessage("");
-    }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendChatMessage();
-    }
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -95,14 +73,10 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={(value) => onTabChange(value as any)} className="flex-1 flex flex-col">
-        <TabsList className="grid w-full grid-cols-3 bg-slate-700/50 m-4 mb-0">
+        <TabsList className="grid w-full grid-cols-2 bg-slate-700/50 m-4 mb-0">
           <TabsTrigger value="participants" className="text-xs">
             <Users className="w-4 h-4 mr-1" />
             People
-          </TabsTrigger>
-          <TabsTrigger value="chat" className="text-xs">
-            <MessageSquare className="w-4 h-4 mr-1" />
-            Chat
           </TabsTrigger>
           <TabsTrigger value="logs" className="text-xs">
             <Terminal className="w-4 h-4 mr-1" />
@@ -119,7 +93,7 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
               </span>
             </div>
           </div>
-          
+
           <ScrollArea className="flex-1 px-4">
             <div className="space-y-2">
               {allParticipants.map((participant) => (
@@ -127,16 +101,16 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
                   key={participant.id}
                   className={cn(
                     "flex items-center gap-3 p-3 rounded-lg transition-colors",
-                    participant.isSpeaking 
-                      ? "bg-emerald-500/10 border border-emerald-500/20" 
+                    participant.isSpeaking
+                      ? "bg-emerald-500/10 border border-emerald-500/20"
                       : "hover:bg-slate-700/30"
                   )}
                 >
                   {/* Avatar */}
                   <div className={cn(
                     "w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium",
-                    participant.isLocal 
-                      ? "bg-blue-500/20 text-blue-400" 
+                    participant.isLocal
+                      ? "bg-blue-500/20 text-blue-400"
                       : "bg-slate-600 text-slate-200"
                   )}>
                     {participant.name.charAt(0).toUpperCase()}
@@ -166,8 +140,8 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
                   <div className="flex items-center gap-1">
                     <div className={cn(
                       "w-6 h-6 rounded flex items-center justify-center",
-                      participant.isMicOn 
-                        ? "text-slate-400" 
+                      participant.isMicOn
+                        ? "text-slate-400"
                         : "bg-red-500/20 text-red-400"
                     )}>
                       {participant.isMicOn ? (
@@ -178,8 +152,8 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
                     </div>
                     <div className={cn(
                       "w-6 h-6 rounded flex items-center justify-center",
-                      participant.isCameraOn 
-                        ? "text-slate-400" 
+                      participant.isCameraOn
+                        ? "text-slate-400"
                         : "bg-red-500/20 text-red-400"
                     )}>
                       {participant.isCameraOn ? (
@@ -204,40 +178,6 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
           </ScrollArea>
         </TabsContent>
 
-        {/* Chat Tab */}
-        <TabsContent value="chat" className="flex-1 flex flex-col m-0">
-          <div className="flex-1 flex flex-col">
-            <ScrollArea className="flex-1 p-4">
-              <div className="text-center text-slate-400 text-sm py-8">
-                <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p>No messages yet</p>
-                <p className="text-xs mt-1">Start a conversation with everyone</p>
-              </div>
-            </ScrollArea>
-            
-            {/* Chat Input */}
-            <div className="p-4 border-t border-slate-700/50">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Send a message to everyone"
-                  value={chatMessage}
-                  onChange={(e) => setChatMessage(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  className="flex-1 bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400"
-                />
-                <Button
-                  onClick={sendChatMessage}
-                  disabled={!chatMessage.trim()}
-                  size="sm"
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  <Send className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          </div>
-        </TabsContent>
-
         {/* Logs Tab */}
         <TabsContent value="logs" className="flex-1 flex flex-col m-0">
           <div className="p-4 pb-2 border-b border-slate-700/50">
@@ -253,7 +193,7 @@ export function SidePanel({ isOpen, activeTab, onTabChange, onClose }: SidePanel
               </Button>
             </div>
           </div>
-          
+
           <ScrollArea className="flex-1 p-4">
             <div className="space-y-1 font-mono text-xs">
               {logs.length === 0 ? (
