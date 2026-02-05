@@ -10,9 +10,13 @@ import (
 	"time"
 
 	"github.com/adityaadpandey/sfu-go/internals/config"
+	appmetrics "github.com/adityaadpandey/sfu-go/internals/metrics"
 	"github.com/adityaadpandey/sfu-go/internals/peer"
 	"github.com/adityaadpandey/sfu-go/internals/room"
+	"github.com/adityaadpandey/sfu-go/internals/session"
 	"github.com/adityaadpandey/sfu-go/internals/signaling"
+	"github.com/adityaadpandey/sfu-go/internals/state"
+	"github.com/adityaadpandey/sfu-go/internals/subscription"
 	"github.com/adityaadpandey/sfu-go/internals/utils"
 	"github.com/gorilla/websocket"
 	"github.com/pion/interceptor"
@@ -39,6 +43,10 @@ type SFU struct {
 	httpServer   *http.Server
 
 	metrics *Metrics
+
+	stateManager    *state.Manager
+	sessionManager  *session.Manager
+	subscriptionMgr *subscription.Manager
 
 	rateLimiters   map[string]*rate.Limiter
 	rateLimitersMu sync.Mutex
@@ -72,18 +80,49 @@ func NewSFU(cfg *config.Config) (*SFU, error) {
 	logger := utils.GetLogger()
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Initialize state manager (Redis)
+	stateManager, err := state.NewManager(
+		cfg.Redis.Addr,
+		cfg.Redis.Password,
+		cfg.Redis.DB,
+		logger,
+	)
+	if err != nil {
+		logger.Warn("Redis connection failed, running without persistence", zap.Error(err))
+		stateManager = nil
+	}
+
+	// Initialize session manager
+	var sessionManager *session.Manager
+	if stateManager != nil {
+		sessionManager = session.NewManager(stateManager, logger)
+		// Recover sessions from previous run
+		recovered, _ := stateManager.RecoverSessions()
+		if len(recovered) > 0 {
+			logger.Info("Recovered sessions from Redis", zap.Int("count", len(recovered)))
+		}
+	}
+
 	sfu := &SFU{
-		config:       cfg,
-		logger:       logger,
-		rooms:        make(map[string]*room.Room),
-		signalingHub: signaling.NewHub(logger),
-		rateLimiters: make(map[string]*rate.Limiter),
-		ctx:          ctx,
-		cancel:       cancel,
+		config:          cfg,
+		logger:          logger,
+		rooms:           make(map[string]*room.Room),
+		signalingHub:    signaling.NewHub(logger),
+		stateManager:    stateManager,
+		sessionManager:  sessionManager,
+		subscriptionMgr: subscription.NewManager(cfg.Media.AutoSubscribe),
+		rateLimiters:    make(map[string]*rate.Limiter),
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 
 	sfu.setupWebRTCConfig()
 	sfu.setupMetrics()
+
+	// Start session cleanup loop
+	if sessionManager != nil {
+		go sfu.sessionCleanupLoop()
+	}
 
 	return sfu, nil
 }
@@ -265,6 +304,26 @@ func (s *SFU) cleanupEmptyRooms() {
 	}
 }
 
+// sessionCleanupLoop periodically removes expired suspended sessions.
+func (s *SFU) sessionCleanupLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			if s.sessionManager != nil {
+				removed := s.sessionManager.CleanupExpiredSessions(s.config.Media.SessionTTL)
+				if removed > 0 {
+					appmetrics.SuspendedSessions.Sub(float64(removed))
+				}
+			}
+		}
+	}
+}
+
 func (s *SFU) getClientRateLimiter(clientID string) *rate.Limiter {
 	s.rateLimitersMu.Lock()
 	defer s.rateLimitersMu.Unlock()
@@ -306,6 +365,8 @@ func (s *SFU) handleSignalingMessage(client *signaling.Client, message signaling
 		s.handleICECandidateMessage(client, message)
 	case signaling.MessageTypeLayerSwitch:
 		s.handleLayerSwitchMessage(client, message)
+	case signaling.MessageTypeICERestartRequest:
+		s.handleICERestartRequest(client)
 	case signaling.MessageTypePong:
 		// no-op
 	default:
@@ -327,7 +388,11 @@ func (s *SFU) validateID(id string, maxLen int, fieldName string) error {
 }
 
 func (s *SFU) handleJoinMessage(client *signaling.Client, message signaling.Message) {
-	var joinMsg signaling.JoinMessage
+	var joinMsg struct {
+		signaling.JoinMessage
+		SessionID    string `json:"sessionId,omitempty"`
+		SessionToken string `json:"sessionToken,omitempty"`
+	}
 	if err := unmarshalMessageData(message.Data, &joinMsg); err != nil {
 		client.SendError(400, "Invalid join message format")
 		return
@@ -340,6 +405,35 @@ func (s *SFU) handleJoinMessage(client *signaling.Client, message signaling.Mess
 	if err := s.validateID(joinMsg.UserID, s.config.Media.MaxUserIDLength, "userId"); err != nil {
 		client.SendError(400, err.Error())
 		return
+	}
+
+	// Try to resume existing session
+	var sess *session.Session
+	var resumed bool
+	if s.sessionManager != nil && joinMsg.SessionID != "" && joinMsg.SessionToken != "" {
+		var err error
+		sess, err = s.sessionManager.ResumeSession(joinMsg.SessionID, joinMsg.SessionToken)
+		if err != nil {
+			s.logger.Debug("Session resume failed", zap.Error(err))
+			appmetrics.RecordSessionRecovery(false)
+		} else {
+			resumed = true
+			appmetrics.RecordSessionRecovery(true)
+			s.logger.Info("Session resumed",
+				zap.String("sessionID", sess.ID),
+				zap.String("userID", sess.UserID),
+			)
+		}
+	}
+
+	// Create new session if not resumed
+	if sess == nil && s.sessionManager != nil {
+		var err error
+		sess, err = s.sessionManager.CreateSession(joinMsg.UserID, joinMsg.RoomID, joinMsg.Name)
+		if err != nil {
+			s.logger.Error("Failed to create session", zap.Error(err))
+		}
+		appmetrics.ActiveSessions.Inc()
 	}
 
 	rm := s.getOrCreateRoom(joinMsg.RoomID)
@@ -375,6 +469,11 @@ func (s *SFU) handleJoinMessage(client *signaling.Client, message signaling.Mess
 		return
 	}
 
+	// Link session to peer
+	if sess != nil {
+		s.sessionManager.UpdatePeerID(sess.ID, p.ID)
+	}
+
 	client.RoomID = joinMsg.RoomID
 	client.UserID = joinMsg.UserID
 	client.Name = joinMsg.Name
@@ -382,12 +481,19 @@ func (s *SFU) handleJoinMessage(client *signaling.Client, message signaling.Mess
 	s.metrics.TotalConnections.Inc()
 	s.updateMetrics()
 
-	// Send success response
-	data, err := json.Marshal(map[string]interface{}{
+	// Build response with session info
+	responseData := map[string]interface{}{
 		"success": true,
 		"peerId":  p.ID,
 		"roomId":  rm.ID,
-	})
+		"resumed": resumed,
+	}
+	if sess != nil {
+		responseData["sessionId"] = sess.ID
+		responseData["sessionToken"] = sess.Token
+	}
+
+	data, err := json.Marshal(responseData)
 	if err != nil {
 		client.SendError(500, "Internal server error")
 		return
@@ -400,6 +506,7 @@ func (s *SFU) handleJoinMessage(client *signaling.Client, message signaling.Mess
 		zap.String("room", joinMsg.RoomID),
 		zap.String("peer", p.ID),
 		zap.String("name", joinMsg.Name),
+		zap.Bool("resumed", resumed),
 	)
 
 	// Notify other peers
@@ -549,8 +656,58 @@ func (s *SFU) handleICECandidateMessage(client *signaling.Client, message signal
 }
 
 func (s *SFU) handleClientDisconnect(client *signaling.Client) {
+	if client.RoomID == "" {
+		s.removeClientRateLimiter(client.ID)
+		return
+	}
+
+	// Suspend session instead of deleting
+	if s.sessionManager != nil {
+		sessions, err := s.sessionManager.GetRoomSessions(client.RoomID)
+		if err == nil {
+			for _, sess := range sessions {
+				if sess.UserID == client.UserID {
+					s.sessionManager.SuspendSession(sess.ID)
+					appmetrics.ActiveSessions.Dec()
+					appmetrics.SuspendedSessions.Inc()
+					break
+				}
+			}
+		}
+	}
+
 	s.handleLeaveMessage(client)
 	s.removeClientRateLimiter(client.ID)
+}
+
+func (s *SFU) handleICERestartRequest(client *signaling.Client) {
+	_, p := s.getRoomAndPeer(client.RoomID, client.UserID)
+	if p == nil {
+		client.SendError(404, "Peer not found")
+		return
+	}
+
+	offer, err := p.RequestICERestart()
+	if err != nil {
+		s.logger.Error("ICE restart failed", zap.Error(err))
+		client.SendError(500, "ICE restart failed")
+		return
+	}
+
+	appmetrics.RecordICERestart()
+
+	data, err := json.Marshal(map[string]interface{}{
+		"sdp":    offer.SDP,
+		"type":   "offer",
+		"peerId": p.ID,
+	})
+	if err != nil {
+		return
+	}
+
+	client.SendMessage(signaling.Message{
+		Type: signaling.MessageTypeICERestartOffer, Data: data, Timestamp: time.Now(),
+	})
 }
 
 func (s *SFU) handleLayerSwitchMessage(client *signaling.Client, message signaling.Message) {

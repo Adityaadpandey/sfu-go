@@ -86,6 +86,10 @@ type MediaConfig struct {
 
 	// Stats
 	StatsInterval time.Duration `yaml:"stats_interval"`
+
+	// Session management
+	SessionTTL    time.Duration `yaml:"session_ttl"`
+	AutoSubscribe bool          `yaml:"auto_subscribe"`
 }
 
 func LoadConfig() *Config {
@@ -141,6 +145,8 @@ func LoadConfig() *Config {
 			SimulcastEnabled:         getEnvBool("SFU_SIMULCAST_ENABLED", false),
 			SpeakerDetectionInterval: time.Duration(getEnvInt("SFU_SPEAKER_DETECTION_INTERVAL_MS", 200)) * time.Millisecond,
 			StatsInterval:            time.Duration(getEnvInt("SFU_STATS_INTERVAL_MS", 3000)) * time.Millisecond,
+			SessionTTL:               time.Duration(getEnvInt("SFU_SESSION_TTL_SEC", 30)) * time.Second,
+			AutoSubscribe:            getEnvBool("SFU_AUTO_SUBSCRIBE", true),
 		},
 	}
 }
