@@ -19,6 +19,15 @@ const (
 	MediaTypeScreen MediaType = "screen"
 )
 
+// NetworkCondition represents the quality of network connection
+type NetworkCondition string
+
+const (
+	NetworkConditionGood     NetworkCondition = "good"
+	NetworkConditionDegraded NetworkCondition = "degraded"
+	NetworkConditionPoor     NetworkCondition = "poor"
+)
+
 type TrackInfo struct {
 	ID        string    `json:"id"`
 	Kind      string    `json:"kind"`
@@ -54,18 +63,24 @@ type Peer struct {
 	disconnectedOnce sync.Once
 
 	// Perfect negotiation state (server is impolite)
-	makingOffer     bool
-	ignoreOffer     bool
-	isSettingRemote bool
+	makingOffer      bool
+	ignoreOffer      bool
+	isSettingRemote  bool
+	inRenegotiation  bool // SFU is currently renegotiating with this peer
+
+	// Network and bandwidth management
+	networkCondition NetworkCondition
+	bandwidthLimit   uint32 // bits per second, 0 = unlimited
 
 	logger          *zap.Logger
 
 	// Callbacks
-	OnTrackAdded            func(*Peer, *webrtc.TrackRemote, *webrtc.RTPReceiver)
-	OnTrackRemoved          func(*Peer, string)
-	OnDataChannel           func(*Peer, *webrtc.DataChannel)
-	OnDisconnected          func(*Peer)
-	OnICECandidateGenerated func(*Peer, *webrtc.ICECandidate)
+	OnTrackAdded              func(*Peer, *webrtc.TrackRemote, *webrtc.RTPReceiver)
+	OnTrackRemoved            func(*Peer, string)
+	OnDataChannel             func(*Peer, *webrtc.DataChannel)
+	OnDisconnected            func(*Peer)
+	OnICECandidateGenerated   func(*Peer, *webrtc.ICECandidate)
+	OnNetworkConditionChanged func(*Peer, NetworkCondition)
 }
 
 func NewPeer(roomID, userID, name string, logger *zap.Logger) *Peer {
@@ -473,6 +488,72 @@ func (p *Peer) Close() error {
 		return pc.Close()
 	}
 	return nil
+}
+
+// --- Renegotiation Coordination ---
+
+// IsAllowNegotiation returns true if client-initiated renegotiation is allowed
+// Returns false if SFU is currently renegotiating with this peer
+func (p *Peer) IsAllowNegotiation() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return !p.inRenegotiation && !p.makingOffer && !p.isSettingRemote
+}
+
+// SetInRenegotiation marks that SFU is currently renegotiating with this peer
+func (p *Peer) SetInRenegotiation(v bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inRenegotiation = v
+}
+
+// IsInRenegotiation returns whether SFU is currently renegotiating
+func (p *Peer) IsInRenegotiation() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.inRenegotiation
+}
+
+// --- Network Condition Management ---
+
+// UpdateNetworkCondition updates the peer's network condition and triggers callback if changed
+func (p *Peer) UpdateNetworkCondition(condition NetworkCondition) {
+	p.mu.Lock()
+	oldCondition := p.networkCondition
+	p.networkCondition = condition
+	callback := p.OnNetworkConditionChanged
+	p.mu.Unlock()
+
+	if oldCondition != condition && callback != nil {
+		callback(p, condition)
+	}
+}
+
+// GetNetworkCondition returns the current network condition
+func (p *Peer) GetNetworkCondition() NetworkCondition {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.networkCondition
+}
+
+// --- Bandwidth Management ---
+
+// SetBandwidthLimit sets the receiving bandwidth limit in bits per second
+func (p *Peer) SetBandwidthLimit(bps uint32) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.bandwidthLimit = bps
+	p.logger.Info("Bandwidth limit set",
+		zap.String("peerID", p.ID),
+		zap.Uint32("bps", bps),
+	)
+}
+
+// GetBandwidthLimit returns the current bandwidth limit
+func (p *Peer) GetBandwidthLimit() uint32 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.bandwidthLimit
 }
 
 func (p *Peer) SendPLI(ssrc uint32) error {

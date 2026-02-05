@@ -39,6 +39,14 @@ const (
 	MessageTypeSubscribe        MessageType = "subscribe"
 	MessageTypeUnsubscribe      MessageType = "unsubscribe"
 	MessageTypeSubscriptionAck  MessageType = "subscription-ack"
+
+	// Renegotiation coordination (inLive SFU pattern)
+	MessageTypeIsAllowRenegotiation MessageType = "is-allow-renegotiation"
+	MessageTypeAllowRenegotiation   MessageType = "allow-renegotiation"
+
+	// Network and bandwidth management
+	MessageTypeNetworkCondition  MessageType = "network-condition"
+	MessageTypeSetBandwidthLimit MessageType = "set-bandwidth-limit"
 )
 
 type Message struct {

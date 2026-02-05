@@ -377,6 +377,10 @@ func (s *SFU) handleSignalingMessage(client *signaling.Client, message signaling
 		s.handleLayerSwitchMessage(client, message)
 	case signaling.MessageTypeICERestartRequest:
 		s.handleICERestartRequest(client)
+	case signaling.MessageTypeIsAllowRenegotiation:
+		s.handleIsAllowRenegotiationMessage(client)
+	case signaling.MessageTypeSetBandwidthLimit:
+		s.handleSetBandwidthLimitMessage(client, message)
 	case signaling.MessageTypePong:
 		// no-op
 	default:
@@ -739,6 +743,67 @@ func (s *SFU) handleLayerSwitchMessage(client *signaling.Client, message signali
 	if err := rm.SwitchLayer(msg.TrackID, p.ID, msg.TargetRID); err != nil {
 		client.SendError(400, err.Error())
 	}
+}
+
+// handleIsAllowRenegotiationMessage checks if client-initiated renegotiation is allowed
+// This prevents "glare" where both sides try to renegotiate simultaneously
+func (s *SFU) handleIsAllowRenegotiationMessage(client *signaling.Client) {
+	_, p := s.getRoomAndPeer(client.RoomID, client.UserID)
+	if p == nil {
+		client.SendError(404, "Peer not found")
+		return
+	}
+
+	allowed := p.IsAllowNegotiation()
+
+	data, err := json.Marshal(map[string]interface{}{
+		"allowed": allowed,
+	})
+	if err != nil {
+		client.SendError(500, "Internal server error")
+		return
+	}
+
+	client.SendMessage(signaling.Message{
+		Type: signaling.MessageTypeAllowRenegotiation, Data: data, Timestamp: time.Now(),
+	})
+
+	s.logger.Debug("IsAllowRenegotiation check",
+		zap.String("peerID", p.ID),
+		zap.Bool("allowed", allowed),
+	)
+}
+
+// handleSetBandwidthLimitMessage sets the receiving bandwidth limit for a peer
+func (s *SFU) handleSetBandwidthLimitMessage(client *signaling.Client, message signaling.Message) {
+	var msg struct {
+		Bandwidth uint32 `json:"bandwidth"` // bits per second
+	}
+	if err := unmarshalMessageData(message.Data, &msg); err != nil {
+		client.SendError(400, "Invalid bandwidth limit message")
+		return
+	}
+
+	_, p := s.getRoomAndPeer(client.RoomID, client.UserID)
+	if p == nil {
+		client.SendError(404, "Peer not found")
+		return
+	}
+
+	p.SetBandwidthLimit(msg.Bandwidth)
+
+	// Acknowledge the bandwidth limit
+	data, err := json.Marshal(map[string]interface{}{
+		"success":   true,
+		"bandwidth": msg.Bandwidth,
+	})
+	if err != nil {
+		return
+	}
+
+	client.SendMessage(signaling.Message{
+		Type: signaling.MessageTypeSetBandwidthLimit, Data: data, Timestamp: time.Now(),
+	})
 }
 
 func (s *SFU) handleDominantSpeakerChanged(roomID, oldPeerID, newPeerID string) {

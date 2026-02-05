@@ -40,6 +40,7 @@ export const useWebRTC = () => {
     reset,
     setSessionInfo,
     clearSessionInfo,
+    setNetworkCondition,
   } = useRoomStore();
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -70,6 +71,10 @@ export const useWebRTC = () => {
 
   // Perfect negotiation (client is polite)
   const makingOfferRef = useRef(false);
+
+  // InLive SFU pattern: renegotiation coordination
+  const isAllowRenegotiationPendingRef = useRef(false);
+  const renegotiationAllowedRef = useRef(true);
 
   const wsUrl = useMemo(() => resolveWsUrl(), []);
 
@@ -761,6 +766,25 @@ export const useWebRTC = () => {
             log('Server error: ' + errorData.message, 'error');
           }
           break;
+
+        // InLive SFU pattern: renegotiation coordination
+        case 'allow-renegotiation':
+          if (msg.data && typeof msg.data === 'object') {
+            const allowData = msg.data as { allowed: boolean };
+            renegotiationAllowedRef.current = allowData.allowed;
+            isAllowRenegotiationPendingRef.current = false;
+            log(`Renegotiation ${allowData.allowed ? 'allowed' : 'blocked by server'}`, 'info');
+          }
+          break;
+
+        // Network condition monitoring
+        case 'network-condition':
+          if (msg.data && typeof msg.data === 'object') {
+            const conditionData = msg.data as { condition: 'good' | 'degraded' | 'poor' };
+            setNetworkCondition(conditionData.condition);
+            log(`Network condition: ${conditionData.condition}`, conditionData.condition === 'poor' ? 'warning' : 'info');
+          }
+          break;
       }
     },
     [
@@ -775,6 +799,7 @@ export const useWebRTC = () => {
       negotiate,
       sendSignalingMessage,
       setSessionInfo,
+      setNetworkCondition,
     ]
   );
 
@@ -1099,6 +1124,53 @@ export const useWebRTC = () => {
     [sendSignalingMessage, log]
   );
 
+  // --- InLive SFU Pattern: Renegotiation Coordination ---
+  // Check with server if client-initiated renegotiation is allowed
+  const checkIsAllowRenegotiation = useCallback((): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) {
+        resolve(false);
+        return;
+      }
+
+      isAllowRenegotiationPendingRef.current = true;
+      sendSignalingMessage({
+        type: 'is-allow-renegotiation',
+        data: {},
+      });
+
+      // Wait for response with timeout
+      const timeout = setTimeout(() => {
+        if (isAllowRenegotiationPendingRef.current) {
+          isAllowRenegotiationPendingRef.current = false;
+          log('Renegotiation check timed out', 'warning');
+          resolve(false);
+        }
+      }, 5000);
+
+      // Poll for response
+      const checkInterval = setInterval(() => {
+        if (!isAllowRenegotiationPendingRef.current) {
+          clearInterval(checkInterval);
+          clearTimeout(timeout);
+          resolve(renegotiationAllowedRef.current);
+        }
+      }, 50);
+    });
+  }, [sendSignalingMessage, log]);
+
+  // --- Bandwidth Management ---
+  const setBandwidthLimit = useCallback(
+    (bps: number) => {
+      sendSignalingMessage({
+        type: 'set-bandwidth-limit',
+        data: { bandwidth: bps },
+      });
+      log(`Set bandwidth limit to ${bps} bps`, 'info');
+    },
+    [sendSignalingMessage, log]
+  );
+
   // --- Disconnect ---
   const disconnect = useCallback(() => {
     disconnectRequestedRef.current = true;
@@ -1130,5 +1202,8 @@ export const useWebRTC = () => {
     toggleCamera,
     toggleScreenShare,
     switchLayer,
+    // InLive SFU pattern
+    checkIsAllowRenegotiation,
+    setBandwidthLimit,
   };
 };

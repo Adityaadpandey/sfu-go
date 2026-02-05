@@ -34,6 +34,12 @@ export type SignalingMessage =
   | { type: "quality-stats"; data: { peerId: string; level: string; packetLoss: number } }
   | { type: "renegotiate"; data: { reason?: string } }
   | { type: "layer-switch"; data: { trackId: string; targetRid: string } }
-  | { type: "layer-available"; data: { trackId: string; layers: string[] } };
+  | { type: "layer-available"; data: { trackId: string; layers: string[] } }
+  // Renegotiation coordination (inLive SFU pattern)
+  | { type: "is-allow-renegotiation"; data: {} }
+  | { type: "allow-renegotiation"; data: { allowed: boolean } }
+  // Network and bandwidth management
+  | { type: "network-condition"; data: { condition: "good" | "degraded" | "poor" } }
+  | { type: "set-bandwidth-limit"; data: { bandwidth: number } };
 
 export type RoomStatus = "idle" | "connecting" | "connected" | "reconnecting" | "error" | "disconnected";
